@@ -1,7 +1,10 @@
 # %%
 # /*##########################################################################
-# Modifed by Henry Towbin October 2023 to work outside of PyMca
+# Modifed by Henry Towbin June 2023 to convert OMNIC .MAP files to Xarray datasets
+# This allows the code work outside of the PyMca software package and enables analysis of the data in a wider set of python libraries 
 
+
+# Original License information
 # The PyMca X-Ray Fluorescence Toolkit
 #
 # Copyright (c) 2004-2023 European Synchrotron Radiation Facility
