@@ -4,7 +4,7 @@ import numpy as np
 import scipy.signal
 import scipy.optimize as optimize
 import pybaselines as pybl
-
+from copy import deepcopy
 import pandas as pd
 from dataclasses import dataclass
 from typing import Dict, Tuple, List, Any, Union
@@ -18,16 +18,19 @@ from .CAXBD import CAXBD_json
 typeIIA = pd.DataFrame(typeIIA_json)
 #typeIIA = typeIIA.set_index(keys=["wn"]) 
 
+typeIIA_Spectrum = Spectrum(
+X=typeIIA['wn'],
+Y=typeIIA['absorbance'],
+X_Unit="Wavenumber",
+Y_Unit="Absorbance",
+)
+        
+
 CAXBD = pd.DataFrame(CAXBD_json )
 #CAXBD = CAXBD.set_index(keys=["wn"])
 
 
-typeIIA_Spectrum = Spectrum(
-        X=typeIIA['wn'],
-        Y=typeIIA['absorbance'],
-        X_Unit="Wavenumber",
-        Y_Unit="Absorbance",
-    )
+
 #TODO This should actually be turned into a matrix for fitting
 # CAXBD_Spectrum = Spectrum(
 #         X=CAXBD['wn'],
@@ -44,8 +47,8 @@ class Diamond_Spectrum(Spectrum):
         print("Diamonds are Forever")
 
     def interpolate_to_diamond(self):
-        spec_min = np.round(self.X.min())+1
-        spec_max = np.round(self.X.max()) -1
+        spec_min = np.round(self.X.min())#+1
+        spec_max = np.round(self.X.max())# -1
 
         typeIIA_min = np.round(typeIIA_Spectrum.X.min())
         typeIIA_max = np.round(typeIIA_Spectrum.X.max())
@@ -56,7 +59,8 @@ class Diamond_Spectrum(Spectrum):
 
         
         self.interpolate(wn_min, wn_max, 1, inplace= True)
-        self.interpolated_typeIIA_Spectrum = typeIIA_Spectrum.interpolate(wn_min, wn_max, 1, inplace= True)
+
+        self.interpolated_typeIIA_Spectrum = typeIIA_Spectrum.interpolate(wn_min, wn_max, 1)
     
     def test_diamond_saturation(self) :
         """Tests if intrinsic diamond FTIR peaks are saturated in a spectrum and returns a dictionary the best peak range to fit over. 
@@ -91,7 +95,9 @@ class Diamond_Spectrum(Spectrum):
         fit_mask_idx = self.test_diamond_saturation()
 
         def baseline_diamond_fit_R_squared(baseline_input_tuple, spectrum_wavenumber = self.X ,spectrum_intensity = self.Y, typeIIA_intensity=ideal_diamond.Y, mask_idx_list=fit_mask_idx):
-            lam, p = baseline_input_tuple
+            lam = 10**np.round(baseline_input_tuple[0],2)
+            p = 10**np.round(baseline_input_tuple[1],1).astype(float)
+
             print(f"lam = {lam}, p = {p}")
             baseline = pybl.whittaker.asls(spectrum_intensity, lam=lam, p=p)[0]
             baseline_subtracted = spectrum_intensity - baseline 
@@ -110,9 +116,11 @@ class Diamond_Spectrum(Spectrum):
 
             return np.log(Total_residuals_squares)
         #p_opt = optimize.minimize(baseline_diamond_fit_R_squared, (100000000,0.0005), args = (self.Y, ideal_diamond.Y, fit_mask_idx),bounds=((1e2, 1e8), (1e-9,1)),method='Nelder-Mead')
-        p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e4, 1e9), (1e-8,0.001)), x0=(10000000,0.0005), tol = 0.9)
+        #p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e4, 1e9), (1e-8,0.001)), x0=(10000000,0.0005), tol = 0.9)
+        #p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((4, 9), (-8,-3)), x0=(6,-4), tol = 100)
         #p_opt = optimize.basinhopping(baseline_diamond_fit_R_squared, (1000000,0.0005), minimizer_kwargs = {"args": (self.Y, ideal_diamond.Y, fit_mask_idx)})
         #p_opt = optimize.dual_annealing(baseline_diamond_fit_R_squared, bounds=((1e2, 1e10), (1e-9,1e-2)), args = (self.Y, ideal_diamond.Y, fit_mask_idx))
+        p_opt = optimize.dual_annealing(baseline_diamond_fit_R_squared, bounds=((4, 9), (-8,-3)), x0=(6,-4) )
         #p_opt = optimize.least_squares(baseline_diamond_fit_R_squared, (1000000,0.00005), args = (self.Y, ideal_diamond.Y, fit_mask_idx),bounds=((1e2, 1e10), (1e-9, 1e-2)) )
         return p_opt
         # Apply mask to baselined data. ( Maybe even optimize baseline to best fit uing scipy optimzie)
@@ -122,7 +130,7 @@ class Diamond_Spectrum(Spectrum):
 
 
     def __post_init__(self):
-        super().__post_init__()
+        super().__post_init__() # Call the __post_init__ method for the Spectrum_object super class then add additional features. 
         # add or subtract 1 to keep rounded data in range
         self.interpolate_to_diamond()
         
