@@ -507,6 +507,23 @@ def Load_SPA_Map(dir_path: str):
         )
 
 
+
+
+def load_SPA_Directory(dir_path: str):
+
+    directory = pathlib.Path(dir_path)
+    # get filenames in directory
+    filenames = directory.glob("*.spa")
+    
+    coordinates = []  # list of tuples with x and y coordinates
+    spectra_intensties = []  # list of numpy arrays with spectra intensities
+    aquisition_dates = []
+    intensity_units = None
+    wave_units = None
+
+
+
+
 # %%
 # List of potential functions for map processing
 # crop - XY

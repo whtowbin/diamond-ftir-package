@@ -146,9 +146,12 @@ class Spectrum:
             self.Y = deepcopy(filtered_Y)
             return self
     
-    def baseline_ASLS(self, lam: float = 1e6, p: float = 0.0005):
+    def baseline_ASLS(self, lam: float = 1e6, p: float = 0.0005, inplace: bool = False):
         baseline = pybl.whittaker.asls(self.Y, lam=lam, p=p)[0]
-        return Spectrum(self.X, baseline)
+        
+        if inplace == False:
+            return Spectrum(self.X, baseline)
+        else: self.baseline = baseline
     
     def __mul__(self,other):
         if not isinstance(other, (int, float)):
@@ -181,7 +184,27 @@ class Spectrum:
             return Spectrum(self.X, self.Y - other)
 
 
+    def test_saturation(self, X_low: Union[int, float], X_high: Union[int, float], saturation_cutoff: Union[int, float], stdev_cut_off: Union[int, float], smoothing_window:int = 21 ) -> bool:
+        """Tests if the spectrum is saturated in a region either by total intensity of by standard deviation. Best Suited for IR spectra where saturation point is known to be around 2 absorbance units and signal gets noisier the more saturated it is. An alternate method for Raman would be to check for plateaus in a peak. 
 
+        Args:
+            X_low (Union[int, float]): _description_
+            X_high (Union[int, float]): _description_
+            saturation_cutoff (Union[int, float]): _description_
+            stdev_cut_off (Union[int, float]): _description_
+            smoothing_window (int, optional): Number of points to use in the median filter used to compare if the noise is too high in a region. Defaults to 21.
+
+        Returns:
+            bool: boolean true if the selected region meets the saturation criteria. False if not
+        """
+        data = self.select_range(X_low=X_low, X_high=X_high)
+        smoothed = data.median_filter(11)
+        mean = data.Y.mean()
+        stdev = np.std(data.Y - smoothed.Y)
+        if mean > saturation_cutoff or stdev > stdev_cut_off:
+            return True
+        else:
+            return False
 
 # %%
 # To Do

@@ -403,3 +403,30 @@ def Load_Omnic_Map(dir_path: str):
     )
 
     return dataset #DataArray
+
+
+def Load_Line_Scan(dir_path: str, step_micron=1):
+
+    mapfile = OmnicMap(dir_path)
+    wn0 = mapfile.info["OmnicInfo"]['First X value'] # cm^-1
+    wn1 = mapfile.info["OmnicInfo"]['Last X value'] # cm^-1
+
+    len_wn = mapfile.data.shape[2]
+    wn  = numpy.linspace(wn0, wn1, len_wn) #cm^-1
+
+
+    profile_length = max(mapfile.data.shape[0:2])
+    profile_positions_microns = numpy.arange(profile_length) * step_micron
+
+    unit_names = {"x": "um", "y": "um", "wn": "cm^-1", "data": "absorbance"}
+    unit_long_names = {"x": "microns", "y": "microns", "wn": "wavenumbers", "data": "absorbance"}
+    metadata = {"unit_names": unit_names, "unit_long_names": unit_long_names, **mapfile.info}
+
+
+    DataArray = xr.DataArray(
+        mapfile.data,
+        dims=("y", "x", "wn"),
+        coords={"y": numpy.arange(1), "x": profile_positions_microns, "wn": wn},
+        attrs= metadata
+    )
+    return DataArray
