@@ -15,6 +15,8 @@ from .typeIIA import typeIIA_json
 from .CAXBD import CAXBD_json
 
 #%%
+
+# Type Spectra are only imported once outside of the class so that they dont fill up the memory in long loops, by creating multiple identical objects
 typeIIA = pd.DataFrame(typeIIA_json)
 #typeIIA = typeIIA.set_index(keys=["wn"]) 
 
@@ -47,8 +49,8 @@ class Diamond_Spectrum(Spectrum):
         print("Diamonds are Forever")
 
     def interpolate_to_diamond(self):
-        spec_min = np.round(self.X.min())#+1
-        spec_max = np.round(self.X.max())# -1
+        spec_min = np.round(self.X.min())+1
+        spec_max = np.round(self.X.max()) -1
 
         typeIIA_min = np.round(typeIIA_Spectrum.X.min())
         typeIIA_max = np.round(typeIIA_Spectrum.X.max())
@@ -80,6 +82,7 @@ class Diamond_Spectrum(Spectrum):
         elif (main_diamond_sat == True) & (secondary_diamond_sat == True) & (third_diamond_sat == False):
             fit_mask_idx  = (self.X > 3130) & (self.X < 3500)
 
+        fit_mask_idx = fit_mask_idx & ((self.X > 3130) & (self.X < 3500)) & ((self.X > 1400) & (self.X < 1800)) & ((self.X > 680) & (self.X < 900))
         return fit_mask_idx
 
     # def baseline_error_diamond_fit(self,ideal_diamond = typeIIA_Spectrum, data_mask = fit_mask_idx):
@@ -94,10 +97,8 @@ class Diamond_Spectrum(Spectrum):
         """
         fit_mask_idx = self.test_diamond_saturation()
 
-        def baseline_diamond_fit_R_squared(baseline_input_tuple, spectrum_wavenumber = self.X ,spectrum_intensity = self.Y, typeIIA_intensity=ideal_diamond.Y, mask_idx_list=fit_mask_idx):
-            lam = 10**np.round(baseline_input_tuple[0],2)
-            p = 10**np.round(baseline_input_tuple[1],1).astype(float)
-
+        def baseline_diamond_fit_R_squared(baseline_input_tuple, spectrum_wavenumber = self.X ,spectrum_intensity = self.median_filter(11).Y, typeIIA_intensity=ideal_diamond.Y, mask_idx_list=fit_mask_idx):
+            lam, p = baseline_input_tuple
             print(f"lam = {lam}, p = {p}")
             baseline = pybl.whittaker.asls(spectrum_intensity, lam=lam, p=p)[0]
             baseline_subtracted = spectrum_intensity - baseline 
@@ -107,23 +108,28 @@ class Diamond_Spectrum(Spectrum):
             
             # Force Baseline to fit flat part of spectrum
             flat_range_idx = (spectrum_wavenumber > 4000) & (spectrum_wavenumber < 5000)
-            weight_factor = 0.001 # Sets balance of residulas between typeIIA and flat baseline section
+            weight_factor = 0.0001 # Sets balance of residulas between typeIIA and flat baseline section
             flat_baseline_residuals_squared = ((baseline_subtracted[flat_range_idx])**2).sum() * weight_factor 
 
             typeIIa_residuals_squared = (( (baseline_subtracted_masked/fit_ratio) - typeIIA_masked)**2).sum() 
 
             Total_residuals_squares = flat_baseline_residuals_squared + typeIIa_residuals_squared
-
-            return np.log(Total_residuals_squares)
+            print(f" total Residuals squared {Total_residuals_squares}")
+            #return np.log(Total_residuals_squares)
+            return Total_residuals_squares
+        
         #p_opt = optimize.minimize(baseline_diamond_fit_R_squared, (100000000,0.0005), args = (self.Y, ideal_diamond.Y, fit_mask_idx),bounds=((1e2, 1e8), (1e-9,1)),method='Nelder-Mead')
-        #p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e4, 1e9), (1e-8,0.001)), x0=(10000000,0.0005), tol = 0.9)
-        #p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((4, 9), (-8,-3)), x0=(6,-4), tol = 100)
+        #p_opt = optimize.minimize(baseline_diamond_fit_R_squared, x0=(6,-4), args = (self.Y, ideal_diamond.Y, fit_mask_idx),bounds=((4, 9), (-9,-4)),method='Powell')
+        p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e5, 1e10), (1e-7,0.001)), x0=(10000000,0.0005), tol = 10000000)
+        #p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((4, 9), (-9,-4)), x0=(6,-4))
         #p_opt = optimize.basinhopping(baseline_diamond_fit_R_squared, (1000000,0.0005), minimizer_kwargs = {"args": (self.Y, ideal_diamond.Y, fit_mask_idx)})
+        #p_opt = optimize.basinhopping(baseline_diamond_fit_R_squared, x0=(6,-4))
         #p_opt = optimize.dual_annealing(baseline_diamond_fit_R_squared, bounds=((1e2, 1e10), (1e-9,1e-2)), args = (self.Y, ideal_diamond.Y, fit_mask_idx))
-        p_opt = optimize.dual_annealing(baseline_diamond_fit_R_squared, bounds=((4, 9), (-8,-3)), x0=(6,-4) )
+        #p_opt = optimize.dual_annealing(baseline_diamond_fit_R_squared, bounds=((4, 9), (-8,-3)), x0=(6,-4) )
         #p_opt = optimize.least_squares(baseline_diamond_fit_R_squared, (1000000,0.00005), args = (self.Y, ideal_diamond.Y, fit_mask_idx),bounds=((1e2, 1e10), (1e-9, 1e-2)) )
+        #p_opt = optimize.least_squares(baseline_diamond_fit_R_squared, x0=(6,-4), args = (self.Y, ideal_diamond.Y, fit_mask_idx),bounds=((4, 9), (-8,-3)) )
         return p_opt
-        # Apply mask to baselined data. ( Maybe even optimize baseline to best fit uing scipy optimzie)
+        # Apply mask to baselined data. ( Maybe even optimize baseline to best fit using scipy optimzie)
 
 
 
@@ -140,3 +146,4 @@ class Diamond_Spectrum(Spectrum):
 
 # test saturation:
 # if raw average is greater than 2.5 and (spectrum - median) has a large stdev dont use main peak.  
+# %%
