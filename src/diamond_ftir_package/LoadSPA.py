@@ -572,3 +572,26 @@ def baseline_correction(xarray, algorithm):
         return None
 
     # apply the algorithm to each spectrum
+
+
+def spa_to_xarray(filepath):
+
+    Spectrum = Load_SPA(filepath)
+    #sample_name = filepath.name.split("-")[0]
+    wavenumber = Spectrum.X
+    intensities = Spectrum.Y
+
+    unit_names = {"x": "um", "y": "um", "wn": "cm^-1", "data": "absorbance"}
+    unit_long_names = {"x": "microns", "y": "microns", "wn": "wavenumbers", "data": "absorbance"}
+    #metadata = {"sample_name" : sample_name, "unit_names": unit_names, "unit_long_names": unit_long_names}
+    metadata = {"unit_names": unit_names, "unit_long_names": unit_long_names}
+
+
+    DataArray = xr.DataArray(
+        [[intensities]],
+        dims=("y", "x", "wn"),
+        coords={"y": np.arange(1), "x": np.arange(1), "wn": wavenumber},
+        attrs= metadata
+    )
+    return DataArray
+

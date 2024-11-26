@@ -8,6 +8,7 @@ from scipy.interpolate import Akima1DInterpolator
 from copy import deepcopy
 from scipy.signal import medfilt
 import pybaselines as pybl
+import scipy.sparse as sparse
 
 @dataclass(order=True)
 class Spectrum:
@@ -153,6 +154,44 @@ class Spectrum:
             return Spectrum(self.X, baseline)
         else: self.baseline = baseline
     
+
+    # def baseline_als(y, lam, p, niter=10):
+    # """
+    # Asymmetric Least Squares Smoothing" by P. Eilers and H. Boelens in 2005 implemented on stackoverflow by user: sparrowcide
+    # https://stackoverflow.com/questions/29156532/python-baseline-correction-library
+    # """
+    # L = len(y)
+    # D = sparse.csc_matrix(np.diff(np.eye(L), 2))
+    # w = np.ones(L)
+    # for i in range(niter):
+    #     W = sparse.spdiags(w, 0, L, L)
+    #     #Z = W + lam * D.dot(D.transpose())
+    #     Z = W + lam * np.dot(D,D.T)
+    #     z = sparse.linalg.spsolve(Z, w*y)
+    #     w = p * (y > z) + (1-p) * (y < z)
+    # return z
+
+    def baseline_ALS(self, lam: float = 1e6, p: float = 0.0005, niter = 10, inplace: bool = False):
+        
+        """
+        Asymmetric Least Squares Smoothing" by P. Eilers and H. Boelens in 2005 implemented on stackoverflow by user: sparrowcide
+        https://stackoverflow.com/questions/29156532/python-baseline-correction-library
+        """
+        y = self.Y
+        L = len(y)
+        D = sparse.csc_matrix(np.diff(np.eye(L), 2))
+        w = np.ones(L)
+        for i in range(niter):
+            W = sparse.spdiags(w, 0, L, L)
+            #Z = W + lam * D.dot(D.transpose())
+            Z = W + lam * np.dot(D,D.T)
+            z = sparse.linalg.spsolve(Z, w*y)
+            w = p * (y > z) + (1-p) * (y < z)
+        baseline = z
+        if inplace == False:
+            return Spectrum(self.X, baseline)
+        else: self.baseline = baseline
+
     def __mul__(self,other):
         if not isinstance(other, (int, float)):
             return NotImplemented
