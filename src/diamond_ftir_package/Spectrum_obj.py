@@ -176,6 +176,7 @@ class Spectrum:
         """
         Asymmetric Least Squares Smoothing" by P. Eilers and H. Boelens in 2005 implemented on stackoverflow by user: sparrowcide
         https://stackoverflow.com/questions/29156532/python-baseline-correction-library
+        Alternative to the Whitaker Smoother in PyBaselines ASLS, it is a slower process but seems more numerically stable
         """
         y = self.Y
         L = len(y)
