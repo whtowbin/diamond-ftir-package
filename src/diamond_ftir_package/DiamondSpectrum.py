@@ -9,12 +9,15 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import Dict, Tuple, List, Any, Union
 import scipy.sparse as sparse
-from tenacity import retry
+from tenacity import retry # Function to retry failed fitting algorithms for a set number of times
+from scipy.spatial import ConvexHull
 
 from .Spectrum_obj import Spectrum
 
 from .typeIIA import typeIIA_json
 from .CAXBD import CAXBD_json
+
+import matplotlib.pyplot as plt
 
 #%%
 
@@ -91,12 +94,13 @@ class Diamond_Spectrum(Spectrum):
     #         self.baseline_ASLS(lam = 1000000, p = 0.0005)
 
     def fit_diamond_peaks_whittaker(self):
-            ideal_diamond = self.interpolated_typeIIA_Spectrum
             """ Fits a diamond spectrum to an ideal spectrum accounting for saturated peaks. Spectrum needs to be interpolated to the same spacing as the typeIIA diamond spectrum.  
 
             Args:
                 ideal_diamond (_type_, optional): _description_. Defaults to typeIIA_Spectrum.
             """
+
+            ideal_diamond = self.interpolated_typeIIA_Spectrum
             fit_mask_idx = self.test_diamond_saturation()
 
         
@@ -112,9 +116,10 @@ class Diamond_Spectrum(Spectrum):
                 
                 # Force Baseline to fit flat part of spectrum
                 flat_range_idx = (spectrum_wavenumber > 4000) & (spectrum_wavenumber < 5000)
-                weight_factor = 0.0001 # Sets balance of residulas between typeIIA and flat baseline section
+                weight_factor = 0.0001 # Sets balance of residuals between typeIIA and flat baseline section
                 flat_baseline_residuals_squared = ((baseline_subtracted[flat_range_idx])**2).sum() * weight_factor 
 
+                # Residuals for the TypeIIA Spectrum and the baseline subtracted data. 
                 typeIIa_residuals_squared = (( (baseline_subtracted_masked/fit_ratio) - typeIIA_masked)**2).sum() 
 
                 Total_residuals_squares = flat_baseline_residuals_squared + typeIIa_residuals_squared
@@ -123,19 +128,21 @@ class Diamond_Spectrum(Spectrum):
                 return Total_residuals_squares
             
 
-            p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e5, 1e10), (1e-7,0.001)), x0=(10000000,0.0005), tol = 1000000000, atol = 100000)
+            p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e7, 1e10), (1e-7,0.001)), x0=(10000000,0.0005), tol = 1000000000, atol = 100000)
             baseline_opt = pybl.whittaker.asls(self.median_filter(11).Y, lam=p_opt.x[0], p=p_opt.x[1])[0]
         
             return baseline_opt
 
 
+
     def fit_diamond_peaks_ALS(self):
-        ideal_diamond = self.interpolated_typeIIA_Spectrum
         """ Fits a diamond spectrum to an ideal spectrum accounting for saturated peaks. Spectrum needs to be interpolated to the same spacing as the typeIIA diamond spectrum.  
 
         Args:
-            ideal_diamond (_type_, optional): _description_. Defaults to typeIIA_Spectrum.
+            ideal_diamond (_type_,
+              optional): _description_. Defaults to typeIIA_Spectrum.
         """
+        ideal_diamond = self.interpolated_typeIIA_Spectrum
         fit_mask_idx = self.test_diamond_saturation()
 
         def baseline_diamond_fit_R_squared(baseline_input_tuple, spectrum_wavenumber = self.X ,spectrum_intensity = self.median_filter(11).Y, typeIIA_intensity=ideal_diamond.Y, mask_idx_list=fit_mask_idx):
@@ -149,7 +156,7 @@ class Diamond_Spectrum(Spectrum):
             
             # Force Baseline to fit flat part of spectrum
             flat_range_idx = (spectrum_wavenumber > 4000) & (spectrum_wavenumber < 5000)
-            weight_factor = 0.0001 # Sets balance of residulas between typeIIA and flat baseline section
+            weight_factor = 0.0001 # Sets balance of residuals between typeIIA and flat baseline section
             flat_baseline_residuals_squared = ((baseline_subtracted[flat_range_idx])**2).sum() * weight_factor 
 
             typeIIa_residuals_squared = (( (baseline_subtracted_masked/fit_ratio) - typeIIA_masked)**2).sum() 
@@ -159,26 +166,73 @@ class Diamond_Spectrum(Spectrum):
             #return np.log(Total_residuals_squares)
             return Total_residuals_squares
         
-        p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e5, 1e10), (1e-7,0.001)), x0=(10000000,0.0005), tol = 1000)
+        p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e7, 1e10), (1e-7,0.001)), x0=(10000000,0.0005), tol = 1000)
         baseline_opt = baseline_als(y=self.median_filter(11).Y , lam=p_opt.x[0], p=p_opt.x[1])
         
         return baseline_opt
        
-    
+    def fit_diamond_peaks_and_baseline(self, baseline_algorithm = "Whittaker"):
+        """ Fits a diamond spectrum to an ideal spectrum accounting for saturated peaks. Spectrum needs to be interpolated to the same spacing as the typeIIA diamond spectrum.  
+
+        Args:
+            ideal_diamond (_type_,
+              optional): _description_. Defaults to typeIIA_Spectrum.
+        """
+        ideal_diamond = self.interpolated_typeIIA_Spectrum
+        fit_mask_idx = self.test_diamond_saturation()
+
+        match baseline_algorithm:
+            case "Whittaker":
+                def baseline_als_internal(spectrum_intensity, lam=lam, p=p):
+                    pass
+                baseline_func = baseline_als_internal
+            case "ALS":
+
+                baseline_func = pybl.whittaker.asls
+            case _:
+                print("Incorrect Baseline Option Selected" )
+        
     def fit_baseline(self):
         try:
 
             baseline = self.fit_diamond_peaks_whittaker()
             
         except (np.linalg.LinAlgError, RuntimeError) as e:
-            print("LinAlg error caught using alternate baseline function")
             baseline = self.fit_diamond_peaks_ALS()
+            if e is np.linalg.LinAlgError:
+                print(e)
+                print("error caught. Fitting Baseline with alternate baseline function")
 
         except Exception as e:
             print(e)
-            
+
         return baseline
-            
+
+    def baseline_rubberband(self):
+        baseline = rubberband(self.X, self.Y)
+        return baseline
+
+
+    def baseline_aggressive_rubberband(self, Y_stretch=0.0001, plot_intermediate = False):
+        midpoint_X = round((max(self.X) - min(self.X))/2)
+        nonlinear_offset = Y_stretch * (self.X - midpoint_X)**2
+        Y_alt = self.Y + nonlinear_offset
+        baseline = rubberband(self.X, Y_alt)
+
+        if plot_intermediate ==True:
+            plt.plot(self.X, Y_alt)
+            plt.plot(self.X, baseline)
+        
+        return (baseline - nonlinear_offset)
+
+    def normalize_diamond(self, TypeIIA_ratio: float):
+        """returns spectrum normalized to 1 cm thickness based on unsaturated Diamond peak heights"""
+        normalized_absorbance = (self.Y - self.baseline) / TypeIIA_ratio # Is the fit baseline already thickness corrected?
+        pass
+
+    def Nitrogen_fit(self, CAXBD = CAXBD):
+        # Fits Nitrogen Aggregation peaks using the C,A,X,B,D spectra developed by XYZ at Maidenhead
+        pass
 
     def __post_init__(self):
             super().__post_init__() # Call the __post_init__ method for the Spectrum_object super class then add additional features. 
@@ -208,3 +262,78 @@ def baseline_als(y, lam, p, niter=10):
         z = sparse.linalg.spsolve(Z, w*y)
         w = p * (y > z) + (1-p) * (y < z)
     return z
+
+
+
+def als_baseline(intensities, asymmetry_param=0.05, smoothness_param=5e5,
+                 max_iters=10, conv_thresh=1e-5, verbose=False):
+  '''Computes the asymmetric least squares baseline.
+  * http://www.science.uva.nl/~hboelens/publications/draftpub/Eilers_2005.pdf
+  smoothness_param: Relative importance of smoothness of the predicted response.
+  asymmetry_param (p): if y > z, w = p, otherwise w = 1-p.
+                       Setting p=1 is effectively a hinge loss.
+  '''
+  smoother = WhittakerSmoother(intensities, smoothness_param, deriv_order=2)
+  # Rename p for concision.
+  p = asymmetry_param
+  # Initialize weights.
+  w = np.ones(intensities.shape[0])
+  for i in range(max_iters):
+    z = smoother.smooth(w)
+    mask = intensities > z
+    new_w = p*mask + (1-p)*(~mask)
+    conv = np.linalg.norm(new_w - w)
+    if verbose:
+      print(i+1, conv)
+    if conv < conv_thresh:
+      break
+    w = new_w
+  else:
+    print('ALS did not converge in %d iterations' % max_iters)
+  return z
+
+
+class WhittakerSmoother(object):
+  def __init__(self, signal, smoothness_param, deriv_order=1):
+    self.y = signal
+    assert deriv_order > 0, 'deriv_order must be an int > 0'
+    # Compute the fixed derivative of identity (D).
+    d = np.zeros(deriv_order*2 + 1, dtype=int)
+    d[deriv_order] = 1
+    d = np.diff(d, n=deriv_order)
+    n = self.y.shape[0]
+    k = len(d)
+    s = float(smoothness_param)
+
+    # Here be dragons: essentially we're faking a big banded matrix D,
+    # doing s * D.T.dot(D) with it, then taking the upper triangular bands.
+    diag_sums = np.vstack([
+        np.pad(s*np.cumsum(d[-i:]*d[:i]), ((k-i,0),), 'constant')
+        for i in range(1, k+1)])
+    upper_bands = np.tile(diag_sums[:,-1:], n)
+    upper_bands[:,:k] = diag_sums
+    for i,ds in enumerate(diag_sums):
+      upper_bands[i,-i-1:] = ds[::-1][:i+1]
+    self.upper_bands = upper_bands
+
+  def smooth(self, w):
+    foo = self.upper_bands.copy()
+    foo[-1] += w  # last row is the diagonal
+    return solveh_banded(foo, w * self.y, overwrite_ab=True, overwrite_b=True)
+
+
+
+def rubberband(x, y):
+    """
+    Rubber band baseline from
+    # Find the convex hull R Kiselev on stack overflow
+    https://dsp.stackexchange.com/questions/2725/how-to-perform-a-rubberband-correction-on-spectroscopic-data
+    """
+    v = ConvexHull(np.array(list(zip(x, y)))).vertices
+    # Rotate convex hull vertices until they start from the lowest one
+    v = np.roll(v, -v.argmin())
+    # Leave only the ascending part
+    v = v[: v.argmax()]
+
+    # Create baseline using linear interpolation between vertices
+    return np.interp(x, x[v], y[v])
