@@ -5,11 +5,12 @@
                 ideal_diamond (_type_, optional): _description_. Defaults to typeIIA_Spectrum.
             """
 
-            ideal_diamond = self.interpolated_typeIIA_Spectrum
+            ideal_diamond_Y = self.interpolated_typeIIA_Spectrum.Y
             fit_mask_idx = self.test_diamond_saturation()
-
-        
-            def baseline_diamond_fit_R_squared(baseline_input_tuple, spectrum_wavenumber = self.X ,spectrum_intensity = self.median_filter(11).Y, typeIIA_intensity=ideal_diamond.Y, mask_idx_list=fit_mask_idx):
+            X = self.X
+            Y = self.median_filter(11).Y
+            def baseline_diamond_fit_R_squared(baseline_input_tuple, spectrum_wavenumber = X ,spectrum_intensity = Y, 
+                                               typeIIA_intensity=ideal_diamond_Y, mask_idx_list=fit_mask_idx):
                 lam, p = baseline_input_tuple
                 lam = np.round(lam,3)
                 print(f"lam = {lam}, p = {p}")

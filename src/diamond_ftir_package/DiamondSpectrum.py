@@ -103,8 +103,15 @@ class Diamond_Spectrum(Spectrum):
         ideal_diamond = self.interpolated_typeIIA_Spectrum
         fit_mask_idx = self.test_diamond_saturation()
         baseline_func = select_baseline_func(baseline_algorithm)
-
-        def baseline_diamond_fit_R_squared(baseline_input_tuple, spectrum_wavenumber = self.X ,spectrum_intensity = self.median_filter(11).Y, typeIIA_intensity=ideal_diamond.Y, mask_idx_list=fit_mask_idx):
+            
+        ideal_diamond_Y = self.interpolated_typeIIA_Spectrum.Y
+        fit_mask_idx = self.test_diamond_saturation()
+        X = self.X
+       
+        Y_rubber = self.median_filter(11).baseline_aggressive_rubberband(Y_stretch=0.00000001)
+        Y_sub = self.median_filter(11).Y  - Y_rubber
+        def baseline_diamond_fit_R_squared(baseline_input_tuple, spectrum_wavenumber = X ,spectrum_intensity = Y_sub, 
+                                            typeIIA_intensity=ideal_diamond_Y, mask_idx_list=fit_mask_idx):
             lam, p = baseline_input_tuple
             print(f"lam = {lam}, p = {p}")
             
@@ -129,11 +136,12 @@ class Diamond_Spectrum(Spectrum):
             return Total_residuals_squares
         
         p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e7, 1e10), (1e-7,0.001)), x0=(10000000,0.0005), tol = 1000)
-        baseline_opt = baseline_als(y=self.median_filter(11).Y , lam=p_opt.x[0], p=p_opt.x[1])
+
+        baseline_opt  = baseline_func(Y_sub , lam=p_opt.x[0], p=p_opt.x[1])
+        baseline_out =   baseline_opt + Y_rubber
         
-        return baseline_opt
-
-
+        return baseline_out
+        # 
         
 
     def fit_baseline(self):
@@ -168,6 +176,7 @@ class Diamond_Spectrum(Spectrum):
             plt.plot(self.X, baseline)
         
         return (baseline - nonlinear_offset)
+
 
     def normalize_diamond(self, TypeIIA_ratio: float):
         """returns spectrum normalized to 1 cm thickness based on unsaturated Diamond peak heights"""
