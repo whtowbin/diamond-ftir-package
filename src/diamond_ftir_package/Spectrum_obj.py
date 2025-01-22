@@ -154,22 +154,7 @@ class Spectrum:
             return Spectrum(self.X, baseline)
         else: self.baseline = baseline
     
-
-    # def baseline_als(y, lam, p, niter=10):
-    # """
-    # Asymmetric Least Squares Smoothing" by P. Eilers and H. Boelens in 2005 implemented on stackoverflow by user: sparrowcide
-    # https://stackoverflow.com/questions/29156532/python-baseline-correction-library
-    # """
-    # L = len(y)
-    # D = sparse.csc_matrix(np.diff(np.eye(L), 2))
-    # w = np.ones(L)
-    # for i in range(niter):
-    #     W = sparse.spdiags(w, 0, L, L)
-    #     #Z = W + lam * D.dot(D.transpose())
-    #     Z = W + lam * np.dot(D,D.T)
-    #     z = sparse.linalg.spsolve(Z, w*y)
-    #     w = p * (y > z) + (1-p) * (y < z)
-    # return z
+ 
 
     def baseline_ALS(self, lam: float = 1e6, p: float = 0.0005, niter = 10, inplace: bool = False):
         
@@ -192,6 +177,28 @@ class Spectrum:
         if inplace == False:
             return Spectrum(self.X, baseline)
         else: self.baseline = baseline
+
+    def baseline_rubberband(self, inplace = False):
+        baseline = rubberband(self.X, self.Y)
+        if inplace == False:
+            return Spectrum(self.X, baseline)
+        else: self.baseline = baseline
+        
+
+    def baseline_aggressive_rubberband(self, Y_stretch=0.0001, inplace = False, plot_intermediate = False):
+        midpoint_X = round((max(self.X) - min(self.X))/2)
+        nonlinear_offset = Y_stretch * (self.X - midpoint_X)**2
+        Y_alt = self.Y + nonlinear_offset
+        baseline = rubberband(self.X, Y_alt) - nonlinear_offset
+
+        if plot_intermediate ==True:
+            plt.plot(self.X, Y_alt)
+            plt.plot(self.X, baseline)
+        
+        if inplace == False:
+            return Spectrum(self.X, baseline)
+        else: self.baseline = baseline
+        
 
     def __mul__(self,other):
         if not isinstance(other, (int, float)):
@@ -245,6 +252,8 @@ class Spectrum:
             return True
         else:
             return False
+        
+ 
 
 # %%
 # To Do
@@ -261,3 +270,19 @@ class Spectrum:
 # example.interpolate_spectrum()
 
 # # %%
+
+
+def rubberband(x, y):
+    """
+    Rubber band baseline from
+    # Find the convex hull R Kiselev on stack overflow
+    https://dsp.stackexchange.com/questions/2725/how-to-perform-a-rubberband-correction-on-spectroscopic-data
+    """
+    v = ConvexHull(np.array(list(zip(x, y)))).vertices
+    # Rotate convex hull vertices until they start from the lowest one
+    v = np.roll(v, -v.argmin())
+    # Leave only the ascending part
+    v = v[: v.argmax()]
+
+    # Create baseline using linear interpolation between vertices
+    return np.interp(x, x[v], y[v])

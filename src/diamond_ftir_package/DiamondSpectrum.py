@@ -80,12 +80,14 @@ class Diamond_Spectrum(Spectrum):
          
         if main_diamond_sat == False:
             fit_mask_idx  =  (((self.X > 1800) & (self.X < 2313)) | (self.X > 2390) & (self.X < 2670))
-        
+            
         elif (main_diamond_sat == True) & (secondary_diamond_sat == False):
             fit_mask_idx  = (self.X > 2390) & (self.X < 2670)
-        
+            print("Primary Diamond Peaks Are Saturated")
+            
         elif (main_diamond_sat == True) & (secondary_diamond_sat == True) & (third_diamond_sat == False):
             fit_mask_idx  = (self.X > 3130) & (self.X < 3500)
+            print("Secondary Diamond Peaks Are Saturated")
 
         fit_mask_idx = fit_mask_idx & ((self.X > 3130) & (self.X < 3500)) & ((self.X > 1400) & (self.X < 1800)) & ((self.X > 680) & (self.X < 900))
         return fit_mask_idx
@@ -100,7 +102,7 @@ class Diamond_Spectrum(Spectrum):
             ideal_diamond (_type_,
                 optional): _description_. Defaults to typeIIA_Spectrum.
         """
-        ideal_diamond = self.interpolated_typeIIA_Spectrum
+    
         fit_mask_idx = self.test_diamond_saturation()
         baseline_func = select_baseline_func(baseline_algorithm)
             
@@ -141,8 +143,10 @@ class Diamond_Spectrum(Spectrum):
         baseline_out =   baseline_opt + Y_rubber
         
         return baseline_out
-        # 
         
+
+        # return {"Baseline":baseline_out, "fit_ratio": 
+        # - Baseline how to best output the fit ratio and update the spectrum object. 
 
     def fit_baseline(self):
         try:
