@@ -18,6 +18,9 @@ from .Spectrum_obj import Spectrum
 from .typeIIA import typeIIA_json
 from .CAXBD import CAXBD_json
 
+import scipy.linalg
+from scipy.optimize import nnls
+
 import matplotlib.pyplot as plt
 
 #%%
@@ -35,7 +38,12 @@ Y_Unit="Absorbance",
         
 
 CAXBD = pd.DataFrame(CAXBD_json )
-#CAXBD = CAXBD.set_index(keys=["wn"])
+CAXBD = CAXBD.set_index(keys=["wn"])
+
+# CAXBD_Spectra = CAXBD_Spectra.set_index("wn")
+
+# CAXBD_Spectra = CAXBD_Spectra[wn_low:wn_high]
+# CAXBD_Spectra_np = CAXBD_Spectra.to_numpy()  # Numpy array for matrix fitting
 
 
 
@@ -116,10 +124,11 @@ class Diamond_Spectrum(Spectrum):
         # Subtract a mild ASLS Baseline
         Y_ASLS = baseline_func(Y_filter,lam = 1e10, p = 0.0005)
         Y_subtracted = Y_filter - Y_ASLS
-
+        # Subtract a Semi-agressive rubberband baseline
         Y_rubber = baseline_aggressive_rubberband(X,Y_subtracted, Y_stretch=0.00000001)
         Y_subtracted  = Y_subtracted - Y_rubber
 
+        # Fit a more aggressive ASLS Baseline to the baseline subtracted values
         def baseline_diamond_fit_R_squared(baseline_input_tuple:tuple[float,float], spectrum_wavenumber = X ,spectrum_intensity = Y_subtracted, 
                                             typeIIA_intensity =ideal_diamond_Y, mask_idx_list =fit_mask_idx):
             """Function to fit a baseline and a thickness normalized "Ideal" TypeIIA to a given diamond FTIR spectrum and calculate the residuals using an optimization function 
@@ -171,8 +180,10 @@ class Diamond_Spectrum(Spectrum):
         fit_ratio =  np.mean(baseline_subtracted_masked/ typeIIA_masked)
 
         if inplace == False:
+
+            # it might be better to return a full copy of the object not just the baseline as a spectrum
             Spectrum_out = Spectrum(X,baseline_out)
-            Spectrum_out.fit_ratio = fit_ratio
+            Spectrum_out.typeIIA_ratio = fit_ratio
             return Spectrum_out
         
         else:
@@ -198,13 +209,24 @@ class Diamond_Spectrum(Spectrum):
             print(e)
 
 
-
     def baseline_rubberband(self):
         baseline = rubberband(self.X, self.Y)
         return baseline
 
 
     def baseline_aggressive_rubberband(self, Y_stretch: float =0.0001, plot_intermediate:bool = False):
+        """
+        Fits a baseline to the spectrum using an aggressive rubberband method. Which uses the Rubberband baseline method in conjunction with an added nonlinear curve 
+        that gets subtracted from the baseline after fitting. 
+
+        Args:
+            Y_stretch (float, optional): Stretch factor for the Y values to enhance the baseline fitting. Defaults to 0.0001.
+            plot_intermediate (bool, optional): If True, plots the intermediate steps of the baseline fitting. Defaults to False.
+
+        Returns:
+            np.ndarray: The fitted baseline.
+        """
+
         midpoint_X = round((max(self.X) - min(self.X))/2)
         nonlinear_offset = Y_stretch * (self.X - midpoint_X)**2 
         Y_alt = self.Y + nonlinear_offset
@@ -217,19 +239,104 @@ class Diamond_Spectrum(Spectrum):
         return (baseline - nonlinear_offset)
     
 
-    def normalize_diamond(self, TypeIIA_ratio: float):
+    def normalize_diamond(self, inplace = True):
         """returns spectrum normalized to 1 cm thickness based on unsaturated Diamond peak heights"""
-        normalized_absorbance = (self.Y - self.baseline) / TypeIIA_ratio # Is the fit baseline already thickness corrected?
-        pass
+        try:
+            normalized_absorbance = (self.Y - self.baseline) / self.typeIIA_ratio # Is the fit baseline already thickness corrected?
+        
+            normalized_spectrum = Spectrum(
+                    X=self.X,
+                    Y=normalized_absorbance,
+                    X_Unit="Wavenumber",
+                    Y_Unit="Absorbance",
+                    )
+            if inplace ==False:
+                return normalized_spectrum
+            else:
+                self.normalized_spectrum = normalized_spectrum
 
-    def Nitrogen_fit(self, CAXBD = CAXBD):
-        # Fits Nitrogen Aggregation peaks using the C,A,X,B,D spectra developed by XYZ at Maidenhead
+
+        except Exception as e:
+            print(e)
+            "Diamond Spectrum object must have a baseline and typeIIA_ratio fit prior to using this method, try using the fit_baseline() method before calling this"
+
+
+
+    def Nitrogen_fit(self, CAXBD = CAXBD, plot_fit = False):
+        # Fits Nitrogen Aggregation peaks using the C,A,X,B,D spectra developed by Fischer at Maidenhead
+
+        # Select Same Range as CAXBD in Diamond Spectrum
+        # Do a non-negative Least squares fit of the CAXBD components 
+        # Output the components in terms of both fit parameters and concentration of nitrogen.
+            # params = np.linalg.lstsq(CAXBD_matrix, spectrum.values, rcond=None)[0]
+        wn_low = 900
+        wn_high = 1400
+        
+        CAXBD_select = CAXBD.loc[wn_low:wn_high]
+        CAXBD_matrix = CAXBD_select.to_numpy()
+        wn_array = CAXBD_select.index.to_numpy()
+        
+
+        
+        spec = self.normalized_spectrum
+        spec.select_range(wn_low, wn_high+1, inplace=True)
+        spec_intensity = np.array(spec.Y)
+
+        try:
+            params = nnls(
+                CAXBD_matrix,
+                spec_intensity,  # .values
+            )[0]
+            if plot_fit == True:
+                fig, ax = plt.subplots()
+                ax.plot(wn_array, spec_intensity, label = "Spectrum")
+                fit_comp = (CAXBD_select * params)
+                model_spectrum = fit_comp.sum(axis=1, numeric_only=True)
+                model_spectrum.plot(label = "Fit Spectrum")
+                fit_comp.plot(ax = ax)
+
+            # Assumes all params are positive. I think this is correct but That depends on the purpose of the X and D components
+        except ValueError as e:
+            print("Value Error")
+            print(e)
+            params = np.zeros(5)
+        
+        C_comp = params[0] 
+        A_comp = params[1]
+        X_comp = params[2]
+        B_comp = params[3] 
+        D_comp = params[4] 
+        A_Nitrogen = params[1] * 16.5
+        B_Nitrogen = params[3] * 79.4 
+        C_Nitrogen = params[0] * 0.624332796
+
+        Total_N = A_Nitrogen + B_Nitrogen + C_Nitrogen
+        B_percent = B_Nitrogen / Total_N * 100
+        C_percent = C_Nitrogen/ Total_N * 100
+# C = fit_param[0]  This needs to be multiplied by a molar absorptivity and as well as a correction for spectral resolution Liggins 2010 Thesis Warwick University
+        nitrogen_dict = {
+            "C_comp" :C_comp, 
+            "A_comp" : A_comp,
+            "X_comp" : X_comp,
+            "B_comp" : B_comp,
+            "D_comp" : D_comp,
+            "A_Nitrogen" : A_Nitrogen,
+            "B_Nitrogen" : B_Nitrogen,
+            "C_Nitrogen" : C_Nitrogen,
+            "Total_N" : Total_N,
+            "B_percent" : B_percent,
+            "C_percent" : C_percent,
+            }
+        self.nitrogen_dict = nitrogen_dict
+
+    def measure_3107_peak(self):
         pass
 
     def __post_init__(self):
             super().__post_init__() # Call the __post_init__ method for the Spectrum_object super class then add additional features. 
             # add or subtract 1 to keep rounded data in range
             self.interpolate_to_diamond()
+            self.typeIIA_ratio = None
             
             return self
 
