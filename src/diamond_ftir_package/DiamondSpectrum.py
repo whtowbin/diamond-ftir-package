@@ -169,7 +169,7 @@ class Diamond_Spectrum(Spectrum):
             #return np.log(Total_residuals_squares)
             return Total_residuals_squares
         
-        p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e6, 1e12), (1e-9,0.001)), x0=(10000000,0.0005), maxiter = 40)# atol = 1000000000000000, tol = 10000000000000000000000)
+        p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e6, 1e12), (1e-9,0.001)), x0=(10000000,0.0005), maxiter = 30, atol = 1000000000000000, tol = 1000000000000000000000000000000)
         #p_opt = optimize.dual_annealing(baseline_diamond_fit_R_squared, bounds=((1e6, 1e12), (1e-9,0.001)), x0=(10000000,0.0005), )#tol = 1000000000000000, maxiter = 200, atol = 100)
 
         baseline_opt  = baseline_func(Y_subtracted , lam=p_opt.x[0], p=p_opt.x[1])
@@ -306,11 +306,11 @@ class Diamond_Spectrum(Spectrum):
         wn_array = CAXBD_select.index.to_numpy()
  
         spec = self.normalized_spectrum
-        spec.select_range(wn_low, wn_high+1, inplace=True)
-        spec_intensity = np.array(spec.Y)
+        # spec.select_range(wn_low, wn_high+1, inplace=True)
+        # spec_intensity = np.array(spec.Y)
+        spec_intensity = spec.select_range(wn_low, wn_high+1).Y
 
-        wn_spacing = self.initial_X[1]- self.initial_X[0]
-
+        
         try:
             params = nnls(
                 CAXBD_matrix,
@@ -340,7 +340,10 @@ class Diamond_Spectrum(Spectrum):
         D_comp = params[4] 
         A_Nitrogen = params[1] * 16.5
         B_Nitrogen = params[3] * 79.4 
-        C_Nitrogen = params[0] * 0.624332796 
+
+        wn_spacing = self.initial_X[1]- self.initial_X[0]
+        C_correction = C_center_wn_spacing_correction(wn_spacing)
+        C_Nitrogen = params[0] * 0.624332796 * C_correction
 
         Total_N = A_Nitrogen + B_Nitrogen + C_Nitrogen
         B_percent = B_Nitrogen / Total_N * 100
@@ -382,7 +385,7 @@ class Diamond_Spectrum(Spectrum):
         offset_pos = np.ones_like(wn_array)
         offset_neg = offset_pos * -1
 
-        linear_pos = wn_array#np.arange(len(wn_array))
+        linear_pos = deepcopy(wn_array) #np.arange(len(wn_array))
         linear_neg = linear_pos * -1
 
         print({linear_pos.shape})
@@ -394,17 +397,12 @@ class Diamond_Spectrum(Spectrum):
         labels = ["C", "A", "X", "B","D", "offset+", "offset-", "linear+", "linear-"]
         fit_component_df = pd.DataFrame(CAXBD_matrix, columns= labels, index= wn_array)
 
-        # spec = self.normalized_spectrum
-        # #spec_intensity = spec.select_range(wn_low, wn_high+1).Y
-        # spec.select_range(wn_low, wn_high+1, inplace=True)
-        # spec_intensity = np.array(spec.Y)
-
         spec = self.normalized_spectrum
-        spec.select_range(wn_low, wn_high+2, inplace=True)
-        spec_intensity = np.array(spec.Y)
-        print({spec_intensity.shape})
+        spec_intensity = spec.select_range(wn_low, wn_high+1).Y
 
-        wn_spacing = self.initial_X[1]- self.initial_X[0]
+
+  
+        print({spec_intensity.shape})
 
         try:
             params = nnls(
@@ -435,7 +433,9 @@ class Diamond_Spectrum(Spectrum):
         D_comp = params[4] 
         A_Nitrogen = params[1] * 16.5
         B_Nitrogen = params[3] * 79.4 
-        C_Nitrogen = params[0] * 0.624332796 
+        wn_spacing = self.initial_X[1]- self.initial_X[0]
+        C_correction = C_center_wn_spacing_correction(wn_spacing)
+        C_Nitrogen = params[0] * 0.624332796 * C_correction
 
         Total_N = A_Nitrogen + B_Nitrogen + C_Nitrogen
         B_percent = B_Nitrogen / Total_N * 100
@@ -601,4 +601,8 @@ def select_baseline_func(baseline_algorithm = "Whittaker"):
 
     return baseline_func
 
+
+
+def C_center_wn_spacing_correction(wn_spacing:float) -> float:
+    return (9.7043*wn_spacing + 25.304) # Function derived from Linear fit to values determined in Liggins et al. 2010 Phd Thesis
 # %%
