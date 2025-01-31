@@ -7,6 +7,9 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import Akima1DInterpolator
 from copy import deepcopy
 from scipy.signal import medfilt
+from scipy.integrate import simpson as simpson_integrate
+from scipy.spatial import ConvexHull
+
 import pybaselines as pybl
 import scipy.sparse as sparse
 
@@ -30,6 +33,7 @@ class Spectrum:
     kwargs: Dict = None  # defines kwargs, should probably have a metadata dict
     baseline = None
 
+
     def __post_init__(self):
         """method automatially called after initialization"""
         if self.X[0] > self.X[-1]:  # Ensures Spectrum X axis is in ascending order.
@@ -38,6 +42,7 @@ class Spectrum:
         # Preserves the initial unmodified spectrum
         self.initial_X = deepcopy(self.X)
         self.initial_Y = deepcopy(self.Y)
+        self.initial_spectrum = deepcopy(self)
 
     def select_range(
         self, X_low: Union[int, float], X_high: Union[int, float], inplace: bool = False
@@ -66,7 +71,32 @@ class Spectrum:
             self.Y = deepcopy(self.Y[X_slice])
             return self
 
-    def plot(self, ax=None, plot_baseline= False, *args, **kwargs):
+    def integrate_peak(self, X_low: Union[int, float, None] = None, X_high: Union[int, float, None] = None, inplace: bool = False):
+       # I should figure out how to include baselines in data.
+        if X_low == None:   # Assume Whole Spectrum is to be intergated 
+            X_low = min(self.X)
+        if X_high == None:   # Assume Whole Spectrum is to be intergated 
+            X_high = max(self.X)
+        
+        spec = (self.select_range(X_low, X_high))
+        #integrated = quad_integrate(spec)   Doesnt work like the old version 
+        integrated = simpson_integrate(spec.Y, x= spec.X)               
+        return integrated
+
+
+    def peak_height(self, X_low: Union[int, float, None] = None, X_high: Union[int, float, None] = None, inplace: bool = False):
+        # I should figure out how to include baselines in data.
+        if X_low == None:   # Assume Whole Spectrum is to be intergated 
+            X_low = min(self.X)
+        if X_high == None:   # Assume Whole Spectrum is to be intergated 
+            X_high = max(self.X)
+        
+        spec = (self.select_range(X_low, X_high))
+        #integrated = quad_integrate(spec)   Doesnt work like the old version 
+        height = np.mean(spec.Y )        
+        return height
+    
+    def plot(self, ax=None, plot_baseline= False, plot_initial= False,  *args, **kwargs):
         """plots a spectrum as on a matplotlib plot.
         Args:
             ax (_type_, optional): matplotlib axis object
@@ -77,7 +107,12 @@ class Spectrum:
         """
         if ax is None:
             ax = plt.gca()
-        ax.plot(self.X, self.Y, *args, **kwargs)
+
+        if plot_initial == True:
+            ax.plot(self.initial_X, self.initial_Y, *args, **kwargs)
+        else:    
+            ax.plot(self.X, self.Y, *args, **kwargs)
+
         ax.set_xlabel(self.X_Unit)
         ax.set_ylabel(self.Y_Unit)
 
@@ -286,3 +321,4 @@ def rubberband(x, y):
 
     # Create baseline using linear interpolation between vertices
     return np.interp(x, x[v], y[v])
+# %%
