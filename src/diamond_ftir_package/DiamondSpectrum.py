@@ -125,7 +125,8 @@ class Diamond_Spectrum(Spectrum):
         Y_ASLS = baseline_func(Y_filter,lam = 1e10, p = 0.0005)
         Y_subtracted = Y_filter - Y_ASLS
         # Subtract a Semi-agressive rubberband baseline
-        Y_rubber = self.median_filter(21).baseline_aggressive_rubberband(Y_stretch=0.00000001).Y
+        #Y_rubber = self.median_filter(21).baseline_aggressive_rubberband(Y_stretch=0.00000001).Y
+        Y_rubber = baseline_aggressive_rubberband(X, Y_subtracted,Y_stretch=0.00000001)
         Y_subtracted  = Y_subtracted - Y_rubber
 
         # Fit a more aggressive ASLS Baseline to the baseline subtracted values
@@ -158,7 +159,7 @@ class Diamond_Spectrum(Spectrum):
             flat_range_idx = (spectrum_wavenumber > 4000) & (spectrum_wavenumber < 5900) 
 
             #This Weight Factor should probably be something that can be fine tuned 
-            weight_factor = 1#0.1 # Sets balance of residuals between typeIIA and flatness of the baseline section
+            weight_factor = 0.5#0.1 # Sets balance of residuals between typeIIA and flatness of the baseline section
             flat_baseline_residuals_squared = ((baseline_subtracted[flat_range_idx])**2).sum() * weight_factor 
 
             # Attempts to weight the residuals under the unsaturated daimond peaks more heavily
@@ -169,7 +170,7 @@ class Diamond_Spectrum(Spectrum):
             #return np.log(Total_residuals_squares)
             return Total_residuals_squares
         
-        p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e6, 1e12), (1e-9,0.001)), x0=(10000000,0.0005), maxiter = 30, atol = 1000000000000000, tol = 1000000000000000000000000000000)
+        p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e7, 1e12), (1e-9,0.001)), x0=(1000000000,0.0005),)# maxiter = 1000, atol = 1000000000, tol = 1000000000000000000)
         #p_opt = optimize.dual_annealing(baseline_diamond_fit_R_squared, bounds=((1e6, 1e12), (1e-9,0.001)), x0=(10000000,0.0005), )#tol = 1000000000000000, maxiter = 200, atol = 100)
 
         baseline_opt  = baseline_func(Y_subtracted , lam=p_opt.x[0], p=p_opt.x[1])
@@ -291,83 +292,10 @@ class Diamond_Spectrum(Spectrum):
 
         return [spec_intensity, CAXBD_matrix]
 
+
+
+
     def Nitrogen_fit(self, CAXBD = CAXBD, plot_fit = False):
-        # Fits Nitrogen Aggregation peaks using the C,A,X,B,D spectra developed by Fischer at Maidenhead
-
-        # Select Same Range as CAXBD in Diamond Spectrum
-        # Do a non-negative Least squares fit of the CAXBD components 
-        # Output the components in terms of both fit parameters and concentration of nitrogen.
-            # params = np.linalg.lstsq(CAXBD_matrix, spectrum.values, rcond=None)[0]
-        wn_low = 900
-        wn_high = 1400
-        
-        CAXBD_select = CAXBD.loc[wn_low:wn_high]
-        CAXBD_matrix = CAXBD_select.to_numpy()
-        wn_array = CAXBD_select.index.to_numpy()
- 
-        spec = self.normalized_spectrum
-        # spec.select_range(wn_low, wn_high+1, inplace=True)
-        # spec_intensity = np.array(spec.Y)
-        spec_intensity = spec.select_range(wn_low, wn_high+1).Y
-
-        
-        try:
-            params = nnls(
-                CAXBD_matrix,
-                spec_intensity,  # .values
-            )[0]
-            if plot_fit == True:
-                fig, ax = plt.subplots()
-                ax.plot(wn_array, spec_intensity, label = "Spectrum")
-                fit_comp = (CAXBD_select * params)
-                model_spectrum = fit_comp.sum(axis=1, numeric_only=True)
-                model_spectrum.plot(label = "Fit Spectrum")
-                fit_comp.plot(ax = ax)
-                ax.legend()
-
-            # Assumes all params are positive. I think this is correct but That depends on the purpose of the X and D components
-        except ValueError as e:
-            print("Value Error")
-            print(e)
-            params = np.zeros(5)
-
-
-        
-        C_comp = params[0] 
-        A_comp = params[1]
-        X_comp = params[2]
-        B_comp = params[3] 
-        D_comp = params[4] 
-        A_Nitrogen = params[1] * 16.5
-        B_Nitrogen = params[3] * 79.4 
-
-        wn_spacing = self.initial_X[1]- self.initial_X[0]
-        C_correction = C_center_wn_spacing_correction(wn_spacing)
-        C_Nitrogen = params[0] * 0.624332796 * C_correction
-
-        Total_N = A_Nitrogen + B_Nitrogen + C_Nitrogen
-        B_percent = B_Nitrogen / Total_N * 100
-        C_percent = C_Nitrogen/ Total_N * 100
-# C = fit_param[0]  This needs to be multiplied by a molar absorptivity and as well as a correction for spectral resolution Liggins 2010 Thesis Warwick University
-        nitrogen_dict = {
-            "C_comp" :C_comp, 
-            "A_comp" : A_comp,
-            "X_comp" : X_comp,
-            "B_comp" : B_comp,
-            "D_comp" : D_comp,
-            "A_Nitrogen" : A_Nitrogen,
-            "B_Nitrogen" : B_Nitrogen,
-            "C_Nitrogen" : C_Nitrogen,
-            "Total_N" : Total_N,
-            "B_percent" : B_percent,
-            "C_percent" : C_percent,
-            }
-        self.nitrogen_dict = nitrogen_dict
-
-
-
-
-    def Nitrogen_fit_wOffset(self, CAXBD = CAXBD, plot_fit = False):
         # Fits Nitrogen Aggregation peaks using the C,A,X,B,D spectra developed by Fischer at Maidenhead
 
         # Select Same Range as CAXBD in Diamond Spectrum
@@ -424,8 +352,6 @@ class Diamond_Spectrum(Spectrum):
             print(e)
             params = np.zeros(5)
 
-
-        
         C_comp = params[0] 
         A_comp = params[1]
         X_comp = params[2]
@@ -434,8 +360,8 @@ class Diamond_Spectrum(Spectrum):
         A_Nitrogen = params[1] * 16.5
         B_Nitrogen = params[3] * 79.4 
         wn_spacing = self.initial_X[1]- self.initial_X[0]
-        C_correction = C_center_wn_spacing_correction(wn_spacing)
-        C_Nitrogen = params[0] * 0.624332796 * C_correction
+        C_correction = C_center_wn_spacing_correction(wn_spacing) # Correction based on spectral resolution in Liggins 2010 PhD thesis
+        C_Nitrogen = params[0] * 0.624332796 * C_correction 
 
         Total_N = A_Nitrogen + B_Nitrogen + C_Nitrogen
         B_percent = B_Nitrogen / Total_N * 100
