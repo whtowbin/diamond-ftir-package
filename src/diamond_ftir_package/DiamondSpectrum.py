@@ -244,7 +244,7 @@ class Diamond_Spectrum(Spectrum):
         # Output the components in terms of both fit parameters and concentration of nitrogen.
             # params = np.linalg.lstsq(CAXBD_matrix, spectrum.values, rcond=None)[0]
         wn_low = 900
-        wn_high = 1400
+        wn_high = 1350 #1400
         
         CAXBD_select = CAXBD.loc[wn_low:wn_high]
         CAXBD_matrix = CAXBD_select.to_numpy()
@@ -252,7 +252,8 @@ class Diamond_Spectrum(Spectrum):
         
         
         offset= np.ones_like(wn_array)
-        linear= deepcopy(wn_array) #np.arange(len(wn_array))
+        linear= np.arange(len(offset)) - (wn_high - wn_low) 
+
         
 
         linear_array = np.vstack((offset, linear))
@@ -263,6 +264,8 @@ class Diamond_Spectrum(Spectrum):
 
         spec = self.normalized_spectrum
         spec_intensity = spec.select_range(wn_low, wn_high+1).Y
+
+        # I should make the bounds limit the height of C or B depending on if its a typa 1aAB or 1b diamond
         bounds = np.array([(0,np.inf),(0,np.inf),(0,np.inf),(0,np.inf),(0,np.inf),(-np.inf,np.inf),(-np.inf,np.inf)]).T
         try:
             params = lsq_linear(
@@ -270,12 +273,13 @@ class Diamond_Spectrum(Spectrum):
                 spec_intensity,  bounds=bounds
             )["x"]
             if plot_fit == True:
-                fig, ax = plt.subplots()
+                fig, ax = plt.subplots(figsize= (12,8))
                 ax.plot(wn_array, spec_intensity, label = "Spectrum")
                 fit_comp = (fit_component_df * params) #(CAXBD_select * params)
                 model_spectrum = fit_comp.sum(axis=1, numeric_only=True)
                 model_spectrum.plot(label = "Fit Spectrum")
-                fit_comp.plot(ax = ax)
+                fit_comp.iloc[:,0:5].plot(ax = ax)
+                fit_comp.iloc[:,5:].sum(axis=1, numeric_only=True).plot( label = "Linear_Offset")
                 ax.legend()
 
             # Assumes all params are positive. I think this is correct but That depends on the purpose of the X and D components
