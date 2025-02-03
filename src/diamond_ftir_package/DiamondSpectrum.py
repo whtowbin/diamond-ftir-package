@@ -40,20 +40,6 @@ Y_Unit="Absorbance",
 CAXBD = pd.DataFrame(CAXBD_json )
 CAXBD = CAXBD.set_index(keys=["wn"])
 
-# CAXBD_Spectra = CAXBD_Spectra.set_index("wn")
-
-# CAXBD_Spectra = CAXBD_Spectra[wn_low:wn_high]
-# CAXBD_Spectra_np = CAXBD_Spectra.to_numpy()  # Numpy array for matrix fitting
-
-
-
-#TODO This should actually be turned into a matrix for fitting
-# CAXBD_Spectrum = Spectrum(
-#         X=CAXBD['wn'],
-#         Y=CAXBD['A'],
-#         X_Unit="Wavenumber",
-#         Y_Unit="Absorbance",
-#     )
 
 @dataclass()
 class Diamond_Spectrum(Spectrum):
@@ -98,6 +84,10 @@ class Diamond_Spectrum(Spectrum):
             fit_mask_idx  = (self.X > 3130) & (self.X < 3500)
             print("Secondary Diamond Peaks Are Saturated")
 
+        elif (main_diamond_sat == True) & (secondary_diamond_sat == True) & (third_diamond_sat == True):
+            raise Exception("All diamond peaks  are saturated and thickness correction cannot be determined")
+
+
         # Adds a bunch of other non saturated regions to the baseline that are useful for fitting baselines to diamonds
         fit_mask_idx = (fit_mask_idx | (((self.X > 3130) & (self.X < 3500)) ))
         #| ((self.X > 1400) & (self.X < 1800)) | ((self.X > 680) & (self.X < 900))))
@@ -113,8 +103,12 @@ class Diamond_Spectrum(Spectrum):
             ideal_diamond (_type_,
                 optional): _description_. Defaults to typeIIA_Spectrum.
         """
-    
-        fit_mask_idx = self.test_diamond_saturation()
+        try:
+            fit_mask_idx = self.test_diamond_saturation()
+        
+        except Exception as e:
+            print(e)
+
         baseline_func = select_baseline_func(baseline_algorithm)
             
         ideal_diamond_Y = self.interpolated_typeIIA_Spectrum.Y
@@ -235,15 +229,10 @@ class Diamond_Spectrum(Spectrum):
             "Diamond Spectrum object must have a baseline and typeIIA_ratio fit prior to using this method, try using the fit_baseline() method before calling this"
 
 
-
-    def Nitrogen_fit(self, CAXBD = CAXBD, plot_fit = False):
-        # Fits Nitrogen Aggregation peaks using the C,A,X,B,D spectra developed by Fischer at Maidenhead
-
-        # Select Same Range as CAXBD in Diamond Spectrum
-        # Do a non-negative Least squares fit of the CAXBD components 
-        # Output the components in terms of both fit parameters and concentration of nitrogen.
-            # params = np.linalg.lstsq(CAXBD_matrix, spectrum.values, rcond=None)[0]
-        wn_low = 900
+    def Nitrogen_fit(self, CAXBD = CAXBD, plot_fit = False, max_C_or_B = 0.1):
+        # Fits Nitrogen Aggregation peaks using the C,A,X,B,D spectra developed by D. Fisher (De Beers Technologies, Maidenhead) for his CAXBD97n excel spreadsheet
+  
+        wn_low = 950
         wn_high = 1350 #1400
         
         CAXBD_select = CAXBD.loc[wn_low:wn_high]
@@ -255,7 +244,6 @@ class Diamond_Spectrum(Spectrum):
         linear= np.arange(len(offset)) - (wn_high - wn_low) 
 
         
-
         linear_array = np.vstack((offset, linear))
         CAXBD_matrix = np.hstack((CAXBD_matrix, linear_array.T))
 
@@ -265,22 +253,40 @@ class Diamond_Spectrum(Spectrum):
         spec = self.normalized_spectrum
         spec_intensity = spec.select_range(wn_low, wn_high+1).Y
 
+        wn_spacing = self.initial_X[1]- self.initial_X[0]
+        C_correction = C_center_wn_spacing_correction(wn_spacing) 
+
         # I should make the bounds limit the height of C or B depending on if its a typa 1aAB or 1b diamond
         bounds = np.array([(0,np.inf),(0,np.inf),(0,np.inf),(0,np.inf),(0,np.inf),(-np.inf,np.inf),(-np.inf,np.inf)]).T
+
         try:
             params = lsq_linear(
                 CAXBD_matrix,
                 spec_intensity,  bounds=bounds
             )["x"]
+
+            A_Nitrogen = params[1] * 16.5
+            B_Nitrogen = params[3] * 79.4 
+            C_Nitrogen = params[0] * 0.624332796 * C_correction 
+
+            type1b_factor = max([params[0],params[1]])
+            type1a_factor = max([params[1],params[3]])
+
+            # Restrict Final N-Fit  if B centers are greater than C centers and vice versa
+            if B_Nitrogen/(A_Nitrogen+B_Nitrogen) < C_Nitrogen/(C_Nitrogen + A_Nitrogen):
+                bounds2 = np.array([(0,np.inf),(0,np.inf),(0,np.inf),(0,type1b_factor*max_C_or_B),(0,type1b_factor * max_C_or_B/10),(-np.inf,np.inf),(-np.inf,np.inf)]).T
+
+            else:
+                # C centers limited to less than 10% of B centers
+                bounds2 = np.array([(0, max_C_or_B * type1a_factor),(0,np.inf),(0, max_C_or_B * type1a_factor),(0,np.inf),(0,0.435*type1a_factor),(-np.inf,np.inf),(-np.inf,np.inf)]).T
+
+            params = lsq_linear(
+                CAXBD_matrix,
+                spec_intensity,  bounds=bounds2
+            )["x"]
+                
             if plot_fit == True:
-                fig, ax = plt.subplots(figsize= (12,8))
-                ax.plot(wn_array, spec_intensity, label = "Spectrum")
-                fit_comp = (fit_component_df * params) #(CAXBD_select * params)
-                model_spectrum = fit_comp.sum(axis=1, numeric_only=True)
-                model_spectrum.plot(label = "Fit Spectrum")
-                fit_comp.iloc[:,0:5].plot(ax = ax)
-                fit_comp.iloc[:,5:].sum(axis=1, numeric_only=True).plot( label = "Linear_Offset")
-                ax.legend()
+                Plot_Nitrogen(params, fit_component_df, wn_array, spec_intensity)
 
             # Assumes all params are positive. I think this is correct but That depends on the purpose of the X and D components
         except ValueError as e:
@@ -288,20 +294,20 @@ class Diamond_Spectrum(Spectrum):
             print(e)
             params = np.zeros(5)
 
+        params = np.round(params,8)
         C_comp = params[0] 
         A_comp = params[1]
         X_comp = params[2]
         B_comp = params[3] 
         D_comp = params[4] 
-        A_Nitrogen = params[1] * 16.5
-        B_Nitrogen = params[3] * 79.4 
-        wn_spacing = self.initial_X[1]- self.initial_X[0]
-        C_correction = C_center_wn_spacing_correction(wn_spacing) # Correction based on spectral resolution in Liggins 2010 PhD thesis
-        C_Nitrogen = params[0] * 0.624332796 * C_correction 
+        A_Nitrogen = np.round(params[1] * 16.5,1)
+        B_Nitrogen = np.round(params[3] * 79.4 ,1)
+        C_Nitrogen = np.round(params[0] * 0.624332796 * C_correction, 1) 
 
-        Total_N = A_Nitrogen + B_Nitrogen + C_Nitrogen
-        B_percent = B_Nitrogen / Total_N * 100
-        C_percent = C_Nitrogen/ Total_N * 100
+        Total_N = np.round(A_Nitrogen + B_Nitrogen + C_Nitrogen,1)
+        B_percent = np.round(B_Nitrogen / Total_N * 100, 1)
+        C_percent = np.round(C_Nitrogen/ Total_N * 100, 1)
+
 # C = fit_param[0]  This needs to be multiplied by a molar absorptivity and as well as a correction for spectral resolution Liggins 2010 Thesis Warwick University
         nitrogen_dict = {
             "C_comp" :C_comp, 
@@ -317,15 +323,58 @@ class Diamond_Spectrum(Spectrum):
             "C_percent" : C_percent,
             }
         self.nitrogen_dict = nitrogen_dict
+
+        self.nitrogen_plot_fit_params = {            
+            "fit_params": params,
+            "fit_component_df": fit_component_df,
+            "wn_array" : wn_array,
+            "spec_intensity": spec_intensity
+            }
     
 
     def measure_3107_peak(self):
-        pass
+
+        spectrum = self.select_range(3060, 3180)
+        baseline = self.select_range(3060, 3180).median_filter(21).baseline_ASLS(lam = 0.1, p = 6e-6)
+        subtracted = spectrum - baseline
+        area_3107 = subtracted.integrate_peak(3100,3115) 
+        area_3085 = subtracted.integrate_peak(3082,3088)
+
+
+        # Maybe add NVH0 (3123 cm-1), and then list all peaks above a certain prominence
+        # 3237, 3107,and 2785
+
+        if self.typeIIA_ratio != None:
+            self.normed_area_3107 = area_3107/ self.typeIIA_ratio
+            self.normed_area_3085 = area_3085/ self.typeIIA_ratio
+
+        else:
+            self.area_3107 = area_3107
+            self.area_3085 = area_3085
+
 
 # Alt Peaks 3085, 
 
-    def measure_platelets():
-        pass
+    def measure_platelets_and_adjacent(self, baseline1_param = {"lam":1000, "p" : 0.001}, find_peaks = {"prominence":0.01},  plot =False):
+        spec = self.select_range(1340,1500)
+        baseline1 = spec.median_filter(5).baseline_ASLS(**baseline1_param)
+        baseline_subtracted1 = (spec - baseline1)
+        baseline2 = baseline_subtracted1.median_filter(5).baseline_aggressive_rubberband(0.00000001)
+        baseline_subtracted2 = baseline_subtracted1 - baseline2
+        peaks = baseline_subtracted2.find_peaks(**{"prominence":0.01})
+
+        #Peaks to find
+        # 1344, 1405 
+        # 1450 cm–1 radiation peak
+        # Platelet between 1355 and 1375
+        if plot == True:
+            baseline_subtracted2.plot()
+        
+        return peaks
+
+
+
+        
 
     def __post_init__(self):
             super().__post_init__() # Call the __post_init__ method for the Spectrum_object super class then add additional features. 
@@ -470,3 +519,17 @@ def select_baseline_func(baseline_algorithm = "Whittaker"):
 def C_center_wn_spacing_correction(wn_spacing:float) -> float:
     return (9.7043*wn_spacing + 25.304) # Function derived from Linear fit to values determined in Liggins et al. 2010 Phd Thesis
 # %%
+
+
+def Plot_Nitrogen(params, fit_component_df, wn_array, spec_intensity):
+    fig, ax = plt.subplots(figsize= (12,8))
+    ax.plot(wn_array, spec_intensity, label = "Spectrum")
+    fit_comp = (fit_component_df * params) #(CAXBD_select * params)
+    model_spectrum = fit_comp.sum(axis=1, numeric_only=True)
+    model_spectrum.plot(label = "Fit Spectrum")
+    fit_comp.iloc[:,0:5].plot(ax = ax)
+    fit_comp.iloc[:,5:].sum(axis=1, numeric_only=True).plot( label = "Linear_Offset")
+    ax.legend()
+    ax.set_xlabel("Wavenumber (1/cm)")
+    ax.set_ylabel("Absorptivity (1/cm)")
+

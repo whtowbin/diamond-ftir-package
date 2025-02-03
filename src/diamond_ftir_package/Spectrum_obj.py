@@ -6,12 +6,13 @@ from typing import Dict, Tuple, List, Any, Union
 import matplotlib.pyplot as plt
 from scipy.interpolate import Akima1DInterpolator
 from copy import deepcopy
-from scipy.signal import medfilt
+from scipy.signal import medfilt, find_peaks
 from scipy.integrate import simpson as simpson_integrate
 from scipy.spatial import ConvexHull
 
 import pybaselines as pybl
 import scipy.sparse as sparse
+
 
 @dataclass(order=True)
 class Spectrum:
@@ -109,7 +110,12 @@ class Spectrum:
             ax = plt.gca()
 
         if plot_initial == True:
-            ax.plot(self.initial_X, self.initial_Y, *args, **kwargs)
+            Xmin = self.X.min()
+            Xmax = self.X.max()
+
+            spec = self.initial_spectrum.select_range(Xmin,Xmax)
+            
+            ax.plot(spec.X, spec.Y, *args, **kwargs)
         else:    
             ax.plot(self.X, self.Y, *args, **kwargs)
 
@@ -225,6 +231,7 @@ class Spectrum:
         nonlinear_offset = Y_stretch * (self.X - midpoint_X)**2
         Y_alt = self.Y + nonlinear_offset
         baseline = rubberband(self.X, Y_alt) - nonlinear_offset
+        baseline[-1] = baseline[-2]
 
         if plot_intermediate ==True:
             plt.plot(self.X, Y_alt)
@@ -233,6 +240,18 @@ class Spectrum:
         if inplace == False:
             return Spectrum(self.X, baseline)
         else: self.baseline = baseline
+        
+    def find_peaks(self, *args, **kwargs):
+        #function to find peaks and return their position on the x axis and heights
+        found_peaks = find_peaks(self.Y, *args, **kwargs)
+        peaks_idx = found_peaks[0]
+        peaks_wn = self.X[peaks_idx]
+        peak_properties = found_peaks[1]
+        peak_properties['peaks_wn'] = peaks_wn
+        peak_properties['peaks_idx'] = peaks_idx
+        return peak_properties
+        
+        # Maybe set minimum prominence based on standard deviation of a baseline subtracted region known to to have no peaks.  
         
 
     def __mul__(self,other):
