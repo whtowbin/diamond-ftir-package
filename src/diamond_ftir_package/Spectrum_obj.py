@@ -249,6 +249,9 @@ class Spectrum:
         peak_properties = found_peaks[1]
         peak_properties['peaks_wn'] = peaks_wn
         peak_properties['peaks_idx'] = peaks_idx
+        if peak_properties.__contains__("widths"):
+            wn_spacing = self.X[1]-self.X[0]
+            peak_properties["widths_wn"] = peak_properties["widths"] * wn_spacing
         return peak_properties
         
         # Maybe set minimum prominence based on standard deviation of a baseline subtracted region known to to have no peaks.  

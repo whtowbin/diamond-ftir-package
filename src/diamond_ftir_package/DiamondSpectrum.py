@@ -346,6 +346,7 @@ class Diamond_Spectrum(Spectrum):
 
         if self.typeIIA_ratio != None:
             self.normed_area_3107 = area_3107/ self.typeIIA_ratio
+
             self.normed_area_3085 = area_3085/ self.typeIIA_ratio
 
         else:
@@ -355,22 +356,53 @@ class Diamond_Spectrum(Spectrum):
 
 # Alt Peaks 3085, 
 
-    def measure_platelets_and_adjacent(self, baseline1_param = {"lam":1000, "p" : 0.001}, find_peaks = {"prominence":0.01},  plot =False):
+    def measure_platelets_and_adjacent(self, baseline1_param = {"lam":1000, "p" : 0.001}, find_peaks_params = {},  plot =False, return_peak_dict = True):
+        # get platelet peak parameters and identify additional peaks in the range from 1340 to 1500
         spec = self.select_range(1340,1500)
         baseline1 = spec.median_filter(5).baseline_ASLS(**baseline1_param)
         baseline_subtracted1 = (spec - baseline1)
         baseline2 = baseline_subtracted1.median_filter(5).baseline_aggressive_rubberband(0.00000001)
         baseline_subtracted2 = baseline_subtracted1 - baseline2
-        peaks = baseline_subtracted2.find_peaks(**{"prominence":0.01})
 
+        if not find_peaks_params.__contains__("prominence"):
+            stdev = baseline_subtracted2.select_range(1380,1450).Y.std()
+            find_peaks_params['prominence'] = stdev * 2 
+
+        peaks = baseline_subtracted2.find_peaks(**find_peaks_params, **{"width":(None,None), "rel_height" : 0.5, "distance" : 5}) # sets relative peak height for the width to 0.5 for full width half max and distance for 5 data points between peaks
+
+        platelet_peak_condition = np.where((peaks["peaks_wn"] > 1355) & (peaks["peaks_wn"] < 1380 ))
+
+        platelet_peak_position = peaks['peaks_wn'][platelet_peak_condition]
+        platelet_peak_height = peaks['prominences'][platelet_peak_condition]
+        platelet_peak_width = peaks['widths_wn'][platelet_peak_condition]
+        if len(platelet_peak_position) == 1:
+            try:
+                platelet_peak_area = baseline_subtracted2.integrate_peak(X_low=platelet_peak_position - platelet_peak_width/2,
+                                            X_high=platelet_peak_position + platelet_peak_width/2
+                                            )
+            
+                if self.typeIIA_ratio != None:
+                    self.normed_area_platelet = platelet_peak_area/ self.typeIIA_ratio
+                    self.normed_height_platelet = platelet_peak_height/ self.typeIIA_ratio
+
+                else:
+                    self.area_platelet = platelet_peak_area
+                    self.height_platelet = platelet_peak_height
+
+            except Exception as e:
+                print(e)
+                print("Could not find platelet peak automatically")
+        #platelet_dict = {"platelet_peak_position":platelet_peak_position, "platelet_peak_height":platelet_peak_height,  }
         #Peaks to find
         # 1344, 1405 
         # 1450 cm–1 radiation peak
         # Platelet between 1355 and 1375
         if plot == True:
             baseline_subtracted2.plot()
-        
-        return peaks
+    
+
+        if return_peak_dict ==True:
+            return peaks
 
 
 
