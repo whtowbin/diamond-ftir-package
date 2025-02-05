@@ -50,7 +50,13 @@ def fit_N_Diamond(filepath):
 
         Spectrum.measure_platelets_and_adjacent()
         dict["Normed_Platelet_Area"] = Spectrum.normed_area_platelet
+        dict["Normed_Platelet_Height"] = Spectrum.normed_height_platelet
+        dict["platelet_peak_position"] = Spectrum.platelet_peak_position
 
+        Spectrum.measure_amber_center()
+        dict["amber_center_peak_positions"] = Spectrum.amber_center_peak_positions 
+        dict["amber_center_peak_heights_normed"] = Spectrum.amber_center_peak_heights_normed 
+        dict["amber_center_peak_prominences_normed"] = Spectrum.amber_center_peak_prominences_normed 
 
         return dict
     else:

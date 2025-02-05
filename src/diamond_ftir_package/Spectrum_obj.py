@@ -13,6 +13,7 @@ from scipy.spatial import ConvexHull
 import pybaselines as pybl
 import scipy.sparse as sparse
 
+from scipy.ndimage import gaussian_filter1d
 
 @dataclass(order=True)
 class Spectrum:
@@ -188,6 +189,34 @@ class Spectrum:
             self.Y = deepcopy(filtered_Y)
             return self
     
+
+    def gaussian_filter(self, sigma: int = 5, inplace: bool = False, outlier_reject:bool = False):
+        """Apply a 1D Gaussian Kernel filter to the spectrum. Smooths spectrum
+
+        Args:
+            sigma (int, optional): standard deviation for Gaussian kernel 
+            inplace (bool, optional): _description_. Defaults to False.
+            outlier_reject:(bool, optional): Determine where to apply a 3x3 median filter prior to smoothing
+
+        Returns:
+            _type_: _description_
+        """
+        if outlier_reject == True:
+            spec = self.median_filter(3)
+        else:
+            spec = self
+            
+        filtered_Y = gaussian_filter1d(spec.Y, sigma)
+
+        if inplace == False:
+            other = deepcopy(self)
+            other.Y = deepcopy(filtered_Y)
+            return other
+        else:
+            self.Y = deepcopy(filtered_Y)
+            return self
+
+
     def baseline_ASLS(self, lam: float = 1e6, p: float = 0.0005, inplace: bool = False):
         baseline = pybl.whittaker.asls(self.Y, lam=lam, p=p)[0]
         
@@ -256,6 +285,79 @@ class Spectrum:
         
         # Maybe set minimum prominence based on standard deviation of a baseline subtracted region known to to have no peaks.  
         
+    def find_complex_peaks(self, 
+                        baseline_range:Tuple = (None,None), 
+                        noise_range:Tuple = (None,None), 
+                        peak_range:Tuple = (None,None),
+                        baseline1_param:Dict = {"lam":1e7, "p" : 0.005}, 
+                        baseline2_stretch_param:float = 0.0000000001, 
+                        rough_median_filter_len:int = 21, 
+                        fine_median_filter_len:int = 3,
+                        fine_gaussian_filter_len:int = 3,
+                        fine_gaussian_filter:bool = False,
+                        fine_median_filter:bool = False,
+                        find_peaks_params = {"width":(None,None), "rel_height" : 0.5, "distance" : 5},
+                        plot_initial:bool = False, plot_subtracted:bool =False, plot_peak_locations:bool = True):
+        
+        # Identify which peaks are present in a complex spectrum
+
+        if baseline_range[0] != None:
+            spec = self.select_range(baseline_range[0],baseline_range[1])
+        else:
+            spec = self
+
+
+        if noise_range[0] != None:
+            noise_X_low, noise_X_high = noise_range
+
+        
+        baseline1 = spec.median_filter(rough_median_filter_len).baseline_ASLS(**baseline1_param)
+        baseline_subtracted1 = (spec - baseline1)
+        baseline2 = baseline_subtracted1.median_filter(rough_median_filter_len).baseline_aggressive_rubberband(baseline2_stretch_param)
+        baseline_subtracted2 = baseline_subtracted1 - baseline2
+
+        if not find_peaks_params.__contains__("height"):
+            stdev_range = baseline_subtracted2.select_range(noise_X_low,noise_X_high)
+            stdev = (stdev_range - stdev_range.median_filter(rough_median_filter_len)).Y.std()
+            find_peaks_params['height'] = stdev * 2 
+            find_peaks_params['prominence'] = stdev * 0.5
+
+        baseline_subtracted2_filtered  = baseline_subtracted2
+
+        if fine_median_filter == True:
+            baseline_subtracted2_filtered = baseline_subtracted2_filtered.median_filter(fine_median_filter_len)
+        
+        if fine_gaussian_filter ==True:
+            baseline_subtracted2_filtered = baseline_subtracted2_filtered.gaussian_filter(fine_gaussian_filter_len)
+
+        if peak_range[0] != None:
+            baseline_subtracted2_filtered = baseline_subtracted2_filtered.select_range(*peak_range)
+
+        peaks = baseline_subtracted2_filtered.find_peaks(**find_peaks_params) # sets relative peak height for the width to 0.5 for full width half max and distance for 5 data points between peaks
+        
+        if plot_initial ==True:
+            spec.plot(label = "Spectrum")
+            (baseline1+baseline2).plot( label = "Baseline")
+            plt.legend()
+
+        if plot_initial ==True & plot_subtracted == True:
+            fig,ax = plt.subplots()
+
+        if plot_subtracted == True:
+            if peak_range[0] != None:
+                baseline_subtracted2.select_range(*peak_range).plot(label = "Spectrum")
+            else:
+                baseline_subtracted2.plot(label = "Spectrum")
+
+            baseline_subtracted2_filtered.plot(label = "Smoothed Spectrum ")
+            if plot_peak_locations ==True:
+                plt.vlines(peaks['peaks_wn'],
+                           ymin = baseline_subtracted2_filtered.Y[peaks['peaks_idx']] - peaks["prominences"], 
+                           ymax =baseline_subtracted2_filtered.Y[peaks['peaks_idx']], color = "k")
+            plt.legend()
+
+        return peaks
+
 
     def __mul__(self,other):
         if not isinstance(other, (int, float)):

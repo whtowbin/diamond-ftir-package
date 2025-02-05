@@ -231,7 +231,8 @@ class Diamond_Spectrum(Spectrum):
 
     def Nitrogen_fit(self, CAXBD = CAXBD, plot_fit = False, max_C_or_B = 0.1):
         # Fits Nitrogen Aggregation peaks using the C,A,X,B,D spectra developed by D. Fisher (De Beers Technologies, Maidenhead) for his CAXBD97n excel spreadsheet
-  
+        # For Type1aAB samples C and X components are limited to 10% of highest peak
+        # D component it must be lower than 0.435* the B compnent maximum after Woods linear correlation between the peaks
         wn_low = 950
         wn_high = 1350 #1400
         
@@ -373,25 +374,37 @@ class Diamond_Spectrum(Spectrum):
         platelet_peak_condition = np.where((peaks["peaks_wn"] > 1355) & (peaks["peaks_wn"] < 1380 ))
 
         platelet_peak_position = peaks['peaks_wn'][platelet_peak_condition]
-        platelet_peak_height = peaks['prominences'][platelet_peak_condition]
+        platelet_peak_prominence = peaks['prominences'][platelet_peak_condition]
+        platelet_peak_height = peaks['heights'][platelet_peak_condition]
         platelet_peak_width = peaks['widths_wn'][platelet_peak_condition]
-        if len(platelet_peak_position) == 1:
-            try:
-                platelet_peak_area = baseline_subtracted2.integrate_peak(X_low=platelet_peak_position - platelet_peak_width/2,
-                                            X_high=platelet_peak_position + platelet_peak_width/2
-                                            )
-            
-                if self.typeIIA_ratio != None:
-                    self.normed_area_platelet = platelet_peak_area/ self.typeIIA_ratio
-                    self.normed_height_platelet = platelet_peak_height/ self.typeIIA_ratio
 
-                else:
-                    self.area_platelet = platelet_peak_area
-                    self.height_platelet = platelet_peak_height
+        if len(platelet_peak_position) > 1:
+            max_platelet_range_idx = np.argmax(platelet_peak_height)
+            platelet_peak_position = platelet_peak_position[max_platelet_range_idx]
+            platelet_peak_height = platelet_peak_height[max_platelet_range_idx]
+            platelet_peak_width = platelet_peak_width[max_platelet_range_idx]
+            platelet_peak_prominence = platelet_peak_prominence[max_platelet_range_idx]
 
-            except Exception as e:
-                print(e)
-                print("Could not find platelet peak automatically")
+        # Try filtering for the largest peak in this range look at the arg_max 
+        try:
+            platelet_peak_area = baseline_subtracted2.integrate_peak(X_low=platelet_peak_position - platelet_peak_width/2,
+                                        X_high=platelet_peak_position + platelet_peak_width/2
+                                        )
+        
+            if self.typeIIA_ratio != None:
+                self.normed_area_platelet = platelet_peak_area/ self.typeIIA_ratio
+                self.normed_height_platelet = platelet_peak_height/ self.typeIIA_ratio
+                
+            else:
+                self.area_platelet = platelet_peak_area
+                self.height_platelet = platelet_peak_height
+
+            self.platelet_peak_position = platelet_peak_position
+        except Exception as e:
+            print(e)
+            print("Could not find platelet peak automatically")
+
+    
         #platelet_dict = {"platelet_peak_position":platelet_peak_position, "platelet_peak_height":platelet_peak_height,  }
         #Peaks to find
         # 1344, 1405 
@@ -400,13 +413,56 @@ class Diamond_Spectrum(Spectrum):
         if plot == True:
             baseline_subtracted2.plot()
     
-
         if return_peak_dict ==True:
             return peaks
 
 
 
+
+    def measure_amber_center(self, baseline_param = {"lam":1e7, "p" : 0.005}, find_peaks_params = {},  plot =False, return_peak_dict = True):
+        # get Amber Center and identify additional peaks in the range from 1340 to 1500
+        spec = self.select_range(3960,6000)
+        baseline1 = spec.median_filter(21).baseline_ASLS(**baseline_param)
+        baseline_subtracted1 = (spec - baseline1)
+        baseline2 = baseline_subtracted1.median_filter(21).baseline_aggressive_rubberband(0.00000001)
+        baseline_subtracted2 = baseline_subtracted1 - baseline2
+
+        if not find_peaks_params.__contains__("prominence"):
+            stdev_range = baseline_subtracted2.select_range(4000,5000)
+            stdev = (stdev_range - stdev_range.median_filter(21)).Y.std()
+            find_peaks_params['prominence'] = stdev * 2 
+
+        peaks = baseline_subtracted2.find_peaks(**find_peaks_params, **{"width":(None,None), "rel_height" : 0.5, "distance" : 5}) # sets relative peak height for the width to 0.5 for full width half max and distance for 5 data points between peaks
         
+        if plot_subtracted == True:
+            baseline_subtracted2.plot()
+           
+    
+    def measure_amber_center(self,plot_initial=False, plot_subtracted=False):
+        peaks = self.find_complex_peaks((3990,6000), 
+                                        peak_range= (4000,5100), 
+                                        noise_range=(4000,5000), 
+                                        plot_initial=True, 
+                                        plot_subtracted=True, 
+                                        fine_gaussian_filter = True,
+                                        fine_median_filter=True,
+                                        baseline2_stretch_param=0.0000000005,
+                                        find_peaks_params={"width":2, "rel_height" : 0.5, "distance" : 5}, 
+                                        fine_median_filter_len=3, 
+                                        fine_gaussian_filter_len = 5,
+                                
+                                        baseline1_param={"lam":100000, "p":0.0005} ) 
+        
+        self.amber_center_peak_positions = peaks['peaks_wn'] 
+
+        if self.typeIIA_ratio != None:
+            self.amber_center_peak_heights_normed = peaks['peak_heights'] / self.typeIIA_ratio
+            self.amber_center_peak_prominences_normed = peaks['peak_prominences'] / self.typeIIA_ratio
+        else:
+            self.amber_center_peak_heights = peaks['peak_heights'] 
+            self.amber_center_peak_prominences = peaks['peak_prominences'] 
+
+        return peaks
 
     def __post_init__(self):
             super().__post_init__() # Call the __post_init__ method for the Spectrum_object super class then add additional features. 
