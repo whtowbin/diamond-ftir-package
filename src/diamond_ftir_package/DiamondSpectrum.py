@@ -2,7 +2,8 @@
 from pathlib import Path
 from copy import deepcopy
 import numpy as np
-import scipy.signal
+
+# import scipy.signal
 import scipy.optimize as optimize
 import pybaselines as pybl
 from copy import deepcopy
@@ -18,7 +19,7 @@ from .Spectrum_obj import Spectrum
 from .typeIIA import typeIIA_json
 from .CAXBD import CAXBD_json
 
-import scipy.linalg
+# import scipy.linalg
 from scipy.optimize import nnls, lsq_linear
 
 import matplotlib.pyplot as plt
@@ -43,6 +44,10 @@ CAXBD = CAXBD.set_index(keys=["wn"])
 
 @dataclass()
 class Diamond_Spectrum(Spectrum):
+    """Class for Diamond Spectum Object. Inherits from Spectrum class to maintain basic methods, plotting, interpolating, smoothing, baselining.
+    Interpolates spectrum to a 1 cm^-1 spacing the min and max wavenumber range must be within 601 and 6000 cm^-1.
+    """
+
     def diamonds(self):
         print("Diamonds are Forever")
 
@@ -101,8 +106,11 @@ class Diamond_Spectrum(Spectrum):
             )
 
         # Adds a bunch of other non saturated regions to the baseline that are useful for fitting baselines to diamonds
-        fit_mask_idx = fit_mask_idx | ((self.X > 3130) & (self.X < 3500))
-        # | ((self.X > 1400) & (self.X < 1800)) | ((self.X > 680) & (self.X < 900))))
+        fit_mask_idx = (
+            fit_mask_idx | ((self.X > 3130) & (self.X < 3500))  #
+            # | ((self.X > 1450) & (self.X < 1750))
+            # | ((self.X > 680) & (self.X < 900))
+        )
         return fit_mask_idx
 
     # def baseline_error_diamond_fit(self,ideal_diamond = typeIIA_Spectrum, data_mask = fit_mask_idx):
@@ -389,7 +397,7 @@ class Diamond_Spectrum(Spectrum):
         spectrum = self.select_range(3060, 3180)
         baseline = self.select_range(3060, 3180).median_filter(21).baseline_ASLS(lam=0.1, p=6e-6)
         subtracted = spectrum - baseline
-        area_3107 = subtracted.integrate_peak(3100, 3115)
+        area_3107 = subtracted.integrate_peak(3103, 3110)  # (3100, 3115)
         area_3085 = subtracted.integrate_peak(3082, 3088)
 
         # Maybe add NVH0 (3123 cm-1), and then list all peaks above a certain prominence
@@ -429,7 +437,7 @@ class Diamond_Spectrum(Spectrum):
             **find_peaks_params, **{"width": (None, None), "rel_height": 0.5, "distance": 5}
         )  # sets relative peak height for the width to 0.5 for full width half max and distance for 5 data points between peaks
 
-        # Define platlet peak range to search
+        # Define platelet peak range to search
         platelet_peak_condition = np.where((peaks["peaks_wn"] > 1355) & (peaks["peaks_wn"] < 1380))
 
         platelet_peak_position = peaks["peaks_wn"][platelet_peak_condition]
@@ -437,7 +445,6 @@ class Diamond_Spectrum(Spectrum):
         platelet_peak_height = peaks["peak_heights"][platelet_peak_condition]
         platelet_peak_width = peaks["widths_wn"][platelet_peak_condition]
 
-        # if len(platelet_peak_position) > 1:
         if len(platelet_peak_position) != 0:
             max_platelet_range_idx = np.argmax(platelet_peak_height)
             platelet_peak_position = platelet_peak_position[max_platelet_range_idx]
@@ -465,34 +472,42 @@ class Diamond_Spectrum(Spectrum):
                 print(e)
                 print("Could not find platelet peak automatically")
 
+        smoothed_1405_range = (
+            baseline_subtracted2.select_range(1380, 1480).median_filter(3).gaussian_filter(1)
+        )
+
+        baseline_1405 = smoothed_1405_range.baseline_ASLS(lam=15, p=0.001)
+        baseline_subtracted3_1405 = baseline_subtracted2.select_range(1380, 1480) - baseline_1405
+
+        noise_1405 = baseline_subtracted3_1405.select_range(1385, 1420).Y.std()
+        height_1405 = baseline_subtracted3_1405.select_range(1403, 1407).Y.max()
+        area_1405 = baseline_subtracted3_1405.integrate_peak(1403, 1407)
+
+        if height_1405 > noise_1405 * 2:
+            if self.typeIIA_ratio != None:
+                self.normed_area_1405 = area_1405 / self.typeIIA_ratio
+                self.normed_height_1405 = height_1405 / self.typeIIA_ratio
+
+            else:
+                self.area_1405 = area_1405 / self.typeIIA_ratio
+                self.height_1405 = height_1405 / self.typeIIA_ratio
+        else:
+            self.normed_area_1405 = np.nan
+            self.normed_height_1405 = np.nan
+            self.area_1405 = np.nan
+            self.height_1405 = np.nan
+
         # Peaks to find
         # 1344, 1405
         # 1450 cm–1 radiation peak
         # Platelet between 1355 and 1375
         if plot == True:
             baseline_subtracted2.plot()
+            smoothed_1405_range.plot()
+            baseline_1405.plot()
 
         if return_peak_dict == True:
             return peaks
-
-    # def measure_amber_center(self, baseline_param = {"lam":1e7, "p" : 0.005}, find_peaks_params = {},  plot =False, return_peak_dict = True):
-    #     # get Amber Center and identify additional peaks in the range from 1340 to 1500
-    #     spec = self.select_range(3960,6000)
-    #     baseline1 = spec.median_filter(21).baseline_ASLS(**baseline_param)
-    #     baseline_subtracted1 = (spec - baseline1)
-    #     baseline2 = baseline_subtracted1.median_filter(21).baseline_aggressive_rubberband(0.00000001)
-    #     baseline_subtracted2 = baseline_subtracted1 - baseline2
-
-    #     if not find_peaks_params.__contains__("prominence"):
-    #         stdev_range = baseline_subtracted2.select_range(4000,5000)
-    #         stdev = (stdev_range - stdev_range.median_filter(21)).Y.std()
-    #         find_peaks_params['prominence'] = stdev * 2
-
-    #     peaks = baseline_subtracted2.find_peaks(**find_peaks_params, **{"width":(None,None), "rel_height" : 0.5, "distance" : 5}) # sets relative peak height for the width to 0.5 for full width half max and distance for 5 data points between peaks
-
-    #     if plot_subtracted == True:
-    #         baseline_subtracted2.plot()
-    #     return
 
     def measure_amber_center(self, plot_initial=False, plot_subtracted=False):
         peaks_output = self.find_complex_peaks(
