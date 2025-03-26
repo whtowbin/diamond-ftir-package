@@ -17,7 +17,7 @@ from scipy.spatial import ConvexHull
 from .Spectrum_obj import Spectrum
 
 from .typeIIA import typeIIA_json
-from .CAXBDY import CAXBDY_json
+from .CAXBD import CAXBD_json
 
 # import scipy.linalg
 from scipy.optimize import nnls, lsq_linear
@@ -38,8 +38,8 @@ typeIIA_Spectrum = Spectrum(
 )
 
 
-CAXBDY = pd.DataFrame(CAXBDY_json)
-CAXBDY = CAXBDY.set_index(keys=["wn"])
+CAXBD = pd.DataFrame(CAXBD_json)
+CAXBD = CAXBD.set_index(keys=["wn"])
 
 
 @dataclass()
@@ -260,22 +260,22 @@ class Diamond_Spectrum(Spectrum):
             print(e)
             "Diamond Spectrum object must have a baseline and typeIIA_ratio fit prior to using this method, try using the fit_baseline() method before calling this"
 
-    def Nitrogen_fit(self, CAXBDY=CAXBDY, plot_fit=False, max_C_or_B=0.1):
-        # Fits Nitrogen Aggregation peaks using the C,A,X,B,D spectra developed by D. Fisher (De Beers Technologies, Maidenhead) for his CAXBDY97n excel spreadsheet
+    def Nitrogen_fit(self, CAXBD=CAXBD, plot_fit=False, max_C_or_B=0.1):
+        # Fits Nitrogen Aggregation peaks using the C,A,X,B,D spectra developed by D. Fisher (De Beers Technologies, Maidenhead) for his CAXBD97n excel spreadsheet
         # For Type1aAB samples C and X components are limited to 10% of highest peak
         # D component it must be lower than 0.435* the B compnent maximum after Woods linear correlation between the peaks
         wn_low = 950
         wn_high = 1350  # 1400
 
-        CAXBDY_select = CAXBDY.loc[wn_low:wn_high]
-        CAXBDY_matrix = CAXBDY_select.to_numpy()
-        wn_array = CAXBDY_select.index.to_numpy()
+        CAXBD_select = CAXBD.loc[wn_low:wn_high]
+        CAXBD_matrix = CAXBD_select.to_numpy()
+        wn_array = CAXBD_select.index.to_numpy()
 
         offset = np.ones_like(wn_array)
         linear = np.arange(len(offset)) - (wn_high - wn_low)
 
         linear_array = np.vstack((offset, linear))
-        CAXBDY_matrix = np.hstack((CAXBDY_matrix, linear_array.T))
+        CAXBD_matrix = np.hstack((CAXBD_matrix, linear_array.T))
 
         labels = [
             "C",
@@ -283,11 +283,10 @@ class Diamond_Spectrum(Spectrum):
             "X",
             "B",
             "D",
-            "Y",
             "offset",
             "linear",
         ]
-        fit_component_df = pd.DataFrame(CAXBDY_matrix, columns=labels, index=wn_array)
+        fit_component_df = pd.DataFrame(CAXBD_matrix, columns=labels, index=wn_array)
 
         spec = self.normalized_spectrum
         spec_intensity = spec.select_range(wn_low, wn_high + 1).Y
@@ -303,14 +302,13 @@ class Diamond_Spectrum(Spectrum):
                 (0, np.inf),
                 (0, np.inf),
                 (0, np.inf),
-                (0, np.inf),
                 (-np.inf, np.inf),
                 (-np.inf, np.inf),
             ]
         ).T
 
         try:
-            params = lsq_linear(CAXBDY_matrix, spec_intensity, bounds=bounds)["x"]
+            params = lsq_linear(CAXBD_matrix, spec_intensity, bounds=bounds)["x"]
 
             A_Nitrogen = params[1] * 16.5
             B_Nitrogen = params[3] * 79.4
@@ -328,7 +326,6 @@ class Diamond_Spectrum(Spectrum):
                         (0, np.inf),
                         (0, type1b_factor * max_C_or_B),
                         (0, type1b_factor * max_C_or_B / 10),
-                        (0, type1b_factor * max_C_or_B / 10),
                         (-np.inf, np.inf),
                         (-np.inf, np.inf),
                     ]
@@ -343,13 +340,12 @@ class Diamond_Spectrum(Spectrum):
                         (0, max_C_or_B * type1a_factor),
                         (0, np.inf),
                         (0, 0.435 * type1a_factor),
-                        (0, np.inf),
                         (-np.inf, np.inf),
                         (-np.inf, np.inf),
                     ]
                 ).T
 
-            params = lsq_linear(CAXBDY_matrix, spec_intensity, bounds=bounds2)["x"]
+            params = lsq_linear(CAXBD_matrix, spec_intensity, bounds=bounds2)["x"]
 
             if plot_fit == True:
                 Plot_Nitrogen(params, fit_component_df, wn_array, spec_intensity)
@@ -366,14 +362,11 @@ class Diamond_Spectrum(Spectrum):
         X_comp = params[2]
         B_comp = params[3]
         D_comp = params[4]
-        Y_comp = params[5]
         A_Nitrogen = np.round(params[1] * 16.5, 1)
         B_Nitrogen = np.round(params[3] * 79.4, 1)
         C_Nitrogen = np.round(params[0] * 0.624332796 * C_correction, 1)
 
         Total_N = np.round(A_Nitrogen + B_Nitrogen + C_Nitrogen, 1)
-        AB_Nitrogen = np.round(A_Nitrogen + B_Nitrogen, 1)
-        AC_Nitrogen = np.round(A_Nitrogen + C_Nitrogen, 1)
         B_percent = np.round(B_Nitrogen / Total_N * 100, 1)
         C_percent = np.round(C_Nitrogen / Total_N * 100, 1)
 
@@ -384,13 +377,10 @@ class Diamond_Spectrum(Spectrum):
             "X_comp": X_comp,
             "B_comp": B_comp,
             "D_comp": D_comp,
-            "Y_comp": Y_comp,
-            "A_Nitrogen ppm": A_Nitrogen,
-            "B_Nitrogen ppm": B_Nitrogen,
-            "C_Nitrogen ppm": C_Nitrogen,
-            "A+B Nitrogen ppm": AB_Nitrogen,
-            "A+C Nitrogen ppm": AC_Nitrogen,
-            "Total_N ppm": Total_N,
+            "A_Nitrogen": A_Nitrogen,
+            "B_Nitrogen": B_Nitrogen,
+            "C_Nitrogen": C_Nitrogen,
+            "Total_N": Total_N,
             "B_percent": B_percent,
             "C_percent": C_percent,
         }
@@ -741,40 +731,11 @@ def C_center_wn_spacing_correction(wn_spacing: float) -> float:
 def Plot_Nitrogen(params, fit_component_df, wn_array, spec_intensity):
     fig, ax = plt.subplots(figsize=(12, 8))
     ax.plot(wn_array, spec_intensity, label="Spectrum")
-    fit_comp = fit_component_df * params  # (CAXBDY_select * params)
+    fit_comp = fit_component_df * params  # (CAXBD_select * params)
     model_spectrum = fit_comp.sum(axis=1, numeric_only=True)
     model_spectrum.plot(label="Fit Spectrum")
-    fit_comp.iloc[:, 0:6].plot(ax=ax)
-    fit_comp.iloc[:, 6:].sum(axis=1, numeric_only=True).plot(label="Linear_Offset")
+    fit_comp.iloc[:, 0:5].plot(ax=ax)
+    fit_comp.iloc[:, 5:].sum(axis=1, numeric_only=True).plot(label="Linear_Offset")
     ax.legend()
     ax.set_xlabel("Wavenumber (1/cm)")
     ax.set_ylabel("Absorptivity (1/cm)")
-
-
-def edit_plot(
-    spectrum_name,
-    output_path=None,
-    subfolder: Union[None, str] = None,
-    set_title=True,
-    save_file=True,
-    dpi=400,
-    dimensions=(12, 8),
-):
-    ax = plt.gca()
-    fig = plt.gcf()
-    fig.set_dpi(dpi)
-    fig.set_size_inches(*dimensions)
-
-    name = spectrum_name.split(".")[0]
-    if output_path == None:
-        if subfolder != None:
-            output_path = Path(f"Results/Figures/{subfolder}").mkdir(parents=True, exist_ok=True)
-        else:
-            output_path = Path(f"Results/Figures").mkdir(parents=True, exist_ok=True)
-
-    spectrum_name.split["."][0]
-    if set_title:
-        ax.set_title(spectrum_name)
-
-    if save_file:
-        plt.savefig(f"{name}.png")

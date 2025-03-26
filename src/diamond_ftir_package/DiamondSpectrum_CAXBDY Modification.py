@@ -749,32 +749,3 @@ def Plot_Nitrogen(params, fit_component_df, wn_array, spec_intensity):
     ax.legend()
     ax.set_xlabel("Wavenumber (1/cm)")
     ax.set_ylabel("Absorptivity (1/cm)")
-
-
-def edit_plot(
-    spectrum_name,
-    output_path=None,
-    subfolder: Union[None, str] = None,
-    set_title=True,
-    save_file=True,
-    dpi=400,
-    dimensions=(12, 8),
-):
-    ax = plt.gca()
-    fig = plt.gcf()
-    fig.set_dpi(dpi)
-    fig.set_size_inches(*dimensions)
-
-    name = spectrum_name.split(".")[0]
-    if output_path == None:
-        if subfolder != None:
-            output_path = Path(f"Results/Figures/{subfolder}").mkdir(parents=True, exist_ok=True)
-        else:
-            output_path = Path(f"Results/Figures").mkdir(parents=True, exist_ok=True)
-
-    spectrum_name.split["."][0]
-    if set_title:
-        ax.set_title(spectrum_name)
-
-    if save_file:
-        plt.savefig(f"{name}.png")

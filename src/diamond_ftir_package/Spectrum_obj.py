@@ -317,7 +317,68 @@ class Spectrum:
         plot_peak_locations: bool = True,
         return_baseline_subtracted=False,
     ):
-        # Identify which peaks are present in a complex spectrum
+        """
+        Identifies peaks in a complex spectrum using a two-stage baseline correction and adaptive peak detection.
+
+        This method uses a sophisticated approach to peak detection in complex spectra:
+        1. Applies initial median filtering to remove noise spikes
+        2. Performs first baseline correction using ASLS
+        3. Performs second baseline correction using aggressive rubberband
+        4. Detects peaks with adaptive threshold based on noise estimation
+        5. Optionally applies additional filtering and visualization
+
+        Args:
+            baseline_range (Tuple, optional): The (low, high) x-range for baseline correction.
+                If (None, None), uses full spectrum. Defaults to (None, None).
+            noise_range (Tuple, optional): The (low, high) x-range used to estimate noise for peak detection.
+                Should be a region with minimal peaks. Defaults to (None, None).
+            peak_range (Tuple, optional): The (low, high) x-range to search for peaks.
+                If (None, None), uses full spectrum. Defaults to (None, None).
+            baseline1_param (Dict, optional): Parameters for ASLS baseline correction.
+                Higher 'lam' gives smoother baseline, higher 'p' increases asymmetry.
+                Defaults to {"lam": 1e7, "p": 0.005}.
+            baseline2_stretch_param (float, optional): Stretch parameter for aggressive rubberband.
+                Higher values increase baseline curvature. Defaults to 0.0000000001.
+            rough_median_filter_len (int, optional): Window size for initial noise filtering.
+                Must be odd integer. Defaults to 21.
+            fine_median_filter_len (int, optional): Window size for final median filtering.
+                Must be odd integer. Defaults to 3.
+            fine_gaussian_filter_len (int, optional): Sigma for final Gaussian filtering.
+                Defaults to 3.
+            fine_gaussian_filter (bool, optional): Whether to apply Gaussian filter after baseline correction.
+                Defaults to False.
+            fine_median_filter (bool, optional): Whether to apply median filter after baseline correction.
+                Defaults to False.
+            peak_noise_mult (int, optional): Multiplier for noise standard deviation to set minimum peak height.
+                Higher values require more prominent peaks. Defaults to 2.
+            find_peaks_params (Dict, optional): Parameters passed to scipy.signal.find_peaks.
+                See scipy documentation for details. Default sets FWHM peak width detection
+                and minimum distance between peaks.
+            plot_initial (bool, optional): Whether to plot original spectrum and baseline.
+                Defaults to False.
+            plot_subtracted (bool, optional): Whether to plot baseline-subtracted spectrum.
+                Defaults to False.
+            plot_peak_locations (bool, optional): Whether to mark detected peaks on the plot.
+                Defaults to True.
+            return_baseline_subtracted (bool, optional): Whether to return baseline-subtracted spectra
+                along with peak information. Defaults to False.
+
+        Returns:
+            dict or peak_properties:
+                If return_baseline_subtracted is False:
+                    Returns peak properties dictionary with peaks_wn (peak positions),
+                    peaks_idx (indices), prominences, widths, etc.
+                If return_baseline_subtracted is True:
+                    Returns dict with:
+                    - "peak_dict": Peak properties dictionary
+                    - "baseline_subtracted": Baseline-subtracted spectrum
+                    - "baseline_subtracted_smoothed": Filtered baseline-subtracted spectrum
+
+        Notes:
+            - Adjusting baseline parameters greatly affects peak detection performance
+            - For noisy spectra, enabling fine filtering is recommended
+            - For accurate noise estimation, select a noise_range with minimal peaks
+        """
 
         if baseline_range[0] != None:
             spec = self.select_range(baseline_range[0], baseline_range[1])
