@@ -44,14 +44,80 @@ CAXBDY = CAXBDY.set_index(keys=["wn"])
 
 @dataclass()
 class Diamond_Spectrum(Spectrum):
-    """Class for Diamond Spectum Object. Inherits from Spectrum class to maintain basic methods, plotting, interpolating, smoothing, baselining.
-    Interpolates spectrum to a 1 cm^-1 spacing the min and max wavenumber range must be within 601 and 6000 cm^-1.
+    """
+    Specialized spectrum class for diamond FTIR analysis with methods for nitrogen content and defect classification.
+
+    The Diamond_Spectrum class extends the base Spectrum class with diamond-specific functionality,
+    including thickness normalization using type IIa diamond reference, nitrogen content estimation,
+    platelet defect analysis, and identification of spectral features associated with various diamond defects.
+
+    The class automatically interpolates input spectra to 1 cm⁻¹ spacing within the range of 601-6000 cm⁻¹
+    to ensure consistent processing across different instruments and measurement conditions.
+
+    Features:
+        - Automatic detection of saturated diamond peaks
+        - Thickness normalization using type IIa diamond reference spectra
+        - Nitrogen content quantification using CAXBDY fitting method
+        - Measurement of platelet peaks, amber centers, and hydrogen-related defects
+        - Specialized baseline correction optimized for diamond spectra
+
+    Attributes:
+        All attributes from the parent Spectrum class, plus:
+        interpolated_typeIIA_Spectrum (Spectrum): Reference type IIa spectrum interpolated to match sample
+        typeIIA_ratio (float): Thickness normalization factor based on diamond intrinsic peaks
+        normalized_spectrum (Spectrum): Thickness-normalized spectrum (1 cm equivalent)
+        nitrogen_dict (Dict): Results of nitrogen content analysis
+
+    Example:
+        ```python
+        # Load a diamond spectrum from a file
+        diamond = Diamond_Spectrum.from_file("sample123.csv", X_Unit="cm⁻¹", Y_Unit="Absorbance")
+
+        # Process the spectrum
+        diamond.fit_baseline()
+        diamond.normalize_diamond()
+        diamond.Nitrogen_fit()
+        diamond.measure_platelets_and_adjacent()
+        diamond.measure_3107_peak()
+
+        # Access results
+        print(f"Total nitrogen: {diamond.nitrogen_dict['Total_N ppm']} ppm")
+        print(f"Aggregation state: {diamond.nitrogen_dict['B_percent']}% B")
+        print(f"Platelet peak: {diamond.normed_area_platelet}")
+        print(f"3107 cm⁻¹ peak area: {diamond.normed_area_3107}")
+        ```
+
+    Notes:
+        - Automatically handles spectra with saturated diamond intrinsic peaks by selecting alternative peaks
+        - Based on reference spectra and methods from diamond research literature
+        - Calculation of nitrogen content follows methodologies established by De Beers Technologies
     """
 
     def diamonds(self):
         print("Diamonds are Forever")
 
     def interpolate_to_diamond(self):
+        """
+        Interpolates the spectrum to a standard spectral range and resolution for diamond analysis.
+
+        This method prepares both the current spectrum and the reference type IIa spectrum by:
+        1. Determining the overlapping spectral range between the current spectrum and the
+           reference type IIa spectrum
+        2. Limiting the range to 601-6000 cm⁻¹ (the most useful range for diamond analysis)
+        3. Interpolating both spectra to 1 cm⁻¹ spacing for consistent analysis
+
+        The interpolation is performed in-place on the current spectrum, and the interpolated
+        type IIa reference spectrum is stored in the `interpolated_typeIIA_Spectrum` attribute.
+        This standardization is essential for thickness normalization and reliable peak analysis.
+
+        Notes:
+            This method is automatically called during object initialization and ensures
+            consistent spectral resolution across all diamond processing steps.
+            Most diamond-specific analysis methods require this interpolation to have been
+            performed first.
+
+        No parameters are required as the method uses the pre-loaded reference spectrum.
+        """
         spec_min = np.round(self.X.min()) + 1
         spec_max = np.round(self.X.max()) - 1
 
@@ -67,9 +133,36 @@ class Diamond_Spectrum(Spectrum):
         self.interpolated_typeIIA_Spectrum = typeIIA_Spectrum.interpolate(wn_min, wn_max, 1)
 
     def test_diamond_saturation(self):
-        """Tests if intrinsic diamond FTIR peaks are saturated in a spectrum and returns a dictionary the best peak range to fit over.
-        Only to be used on non-thickness normalized spectra that have not been baseline corrected.
-        Assumes that saturation is sequential i.e. if primary is unsaturated then all others are unsaturated too.
+        """
+        Detects saturation in diamond intrinsic absorption peaks and selects appropriate regions for thickness normalization.
+
+        This method systematically tests three key regions in diamond FTIR spectra for detector saturation:
+        1. Primary two-phonon diamond peaks (1970-2040 cm⁻¹)
+        2. Secondary two-phonon diamond peaks (2400-2575 cm⁻¹)
+        3. Three-phonon diamond peaks (3000-3500 cm⁻¹)
+
+        The method assumes sequential saturation: if primary peaks are unsaturated, secondary and tertiary
+        peaks are also unsaturated. This provides robustness for fitting diamond spectra with various
+        thicknesses and collection conditions where saturation is common.
+
+        Returns:
+            numpy.ndarray: Boolean mask array indicating regions of the spectrum to use for baseline
+            and thickness normalization fitting. True values in the mask correspond to spectral regions
+            that should be included in fitting procedures.
+
+        Notes:
+            - This method should only be used on raw (not baseline-corrected) and non-thickness-normalized spectra
+            - Saturation detection uses both absolute intensity thresholds and standard deviation metrics
+            - The returned mask is used by the diamond peak fitting algorithm to avoid saturated regions
+            - For very thick diamonds where all intrinsic peaks are saturated, an exception is raised
+            - Additional non-saturated regions (e.g., 3130-3500 cm⁻¹) are always included in the mask
+
+        Raises:
+            Exception: If all three diamond peak regions are saturated, making thickness normalization impossible
+
+        See Also:
+            fit_diamond_peaks: Uses the mask from this method to perform baseline and thickness fitting
+            test_saturation: Lower-level method that tests individual regions for saturation
         """
         main_diamond_sat = self.test_saturation(
             X_low=1970, X_high=2040, saturation_cutoff=2.5, stdev_cut_off=0.5
@@ -117,11 +210,44 @@ class Diamond_Spectrum(Spectrum):
     #         self.baseline_ASLS(lam = 1000000, p = 0.0005)
 
     def fit_diamond_peaks(self, baseline_algorithm: str = "Whittaker", inplace: bool = False):
-        """Fits a diamond spectrum to an ideal spectrum accounting for saturated peaks. Spectrum needs to be interpolated to the same spacing as the typeIIA diamond spectrum.
+        """
+        Fits a sophisticated baseline to diamond spectra and calculates thickness normalization factor.
+
+        This method performs a multi-stage baseline correction optimized specifically for diamond FTIR spectra:
+        1. Detects which diamond intrinsic peaks are unsaturated using test_diamond_saturation()
+        2. Applies a coarse median filter and initial baseline removal
+        3. Applies a rubberband correction to remove broad curvature
+        4. Optimizes a final baseline using the reference type IIa spectrum as a guide
+        5. Calculates the thickness normalization factor by comparing unsaturated diamond peaks
+           to the type IIa reference
+
+        The method handles saturated regions automatically by using the mask from test_diamond_saturation()
+        to only fit against unsaturated diamond intrinsic peaks.
 
         Args:
-            ideal_diamond (_type_,
-                optional): _description_. Defaults to typeIIA_Spectrum.
+            baseline_algorithm (str, optional): Algorithm to use for asymmetric least squares baseline
+                correction. Options are "Whittaker" (recommended, uses PyBaselines implementation) or
+                "ALS" (custom implementation, slower but more stable for some spectra). Defaults to "Whittaker".
+            inplace (bool, optional): If True, stores the baseline and typeIIA_ratio in the current object.
+                If False, returns a new Spectrum object with the baseline. Defaults to False.
+
+        Returns:
+            Spectrum or self: If inplace=False, returns a new Spectrum object with the calculated
+            baseline as Y values and typeIIA_ratio attribute. If inplace=True, modifies the current
+            object by setting its baseline attribute and typeIIA_ratio, and returns self.
+
+        Notes:
+            - The method requires the spectrum to have been interpolated with interpolate_to_diamond() first
+            - The optimization balances fitting the diamond intrinsic peaks while maintaining flat regions
+            - The calculated typeIIA_ratio is used for thickness normalization in normalize_diamond()
+            - For very noisy spectra, try using median_filter() before applying this method
+
+        Raises:
+            Exception: If diamond peak saturation testing fails or optimization cannot converge
+
+        See Also:
+            test_diamond_saturation: Detects which diamond peaks are saturated
+            normalize_diamond: Uses the typeIIA_ratio to create a thickness-normalized spectrum
         """
         try:
             fit_mask_idx = self.test_diamond_saturation()
@@ -261,9 +387,60 @@ class Diamond_Spectrum(Spectrum):
             "Diamond Spectrum object must have a baseline and typeIIA_ratio fit prior to using this method, try using the fit_baseline() method before calling this"
 
     def Nitrogen_fit(self, CAXBDY=CAXBDY, plot_fit=False, max_C_or_B=0.1):
-        # Fits Nitrogen Aggregation peaks using the C,A,X,B,D spectra developed by D. Fisher (De Beers Technologies, Maidenhead) for his CAXBDY97n excel spreadsheet
-        # For Type1aAB samples C and X components are limited to 10% of highest peak
-        # D component it must be lower than 0.435* the B compnent maximum after Woods linear correlation between the peaks
+        """
+        Quantifies nitrogen content and aggregation state using the CAXBDY component fitting method.
+
+        This method analyzes the 950-1350 cm⁻¹ region to determine nitrogen content by fitting
+        reference spectra for different nitrogen defects in diamond:
+        - C centers: isolated substitutional nitrogen (Type Ib)
+        - A centers: nitrogen pairs (Type IaA)
+        - B centers: four nitrogen atoms surrounding a vacancy (Type IaB)
+        - X: N+ component
+        - D: Platelet related Peak
+        - Y: Component found in Type Ib diamonds
+
+        The method applies appropriate constraints to ensure physically meaningful results:
+        - For Type IaAB diamonds, C and X components are limited to 10% of the highest peak
+        - D component is limited based on Woods' linear correlation with B component
+        - Spectral resolution correction is applied to C center calculations
+
+        The results are stored in the `nitrogen_dict` attribute with comprehensive information
+        about nitrogen concentrations and aggregation states.
+
+        Args:
+            CAXBDY (pandas.DataFrame, optional): Reference nitrogen component spectra.
+                Defaults to the pre-loaded CAXBDY dataset.
+            plot_fit (bool, optional): Whether to plot the component fitting results.
+                Useful for visually assessing fit quality. Defaults to False.
+            max_C_or_B (float, optional): Maximum ratio for minor components (C in Type IaAB or
+                B in Type Ib). Controls the balance between component types. Defaults to 0.1.
+
+        Notes:
+            - This method requires a normalized spectrum (use normalize_diamond() first)
+            - Nitrogen concentrations are calculated in atomic ppm using standard calibration factors:
+             - * A centers: 16.5 ppm per cm⁻¹ of absorption
+             - * B centers: 79.4 ppm per cm⁻¹ of absorption
+             - * C centers: Variable based on spectral resolution (Liggins 2010)
+            - Aggregation state is expressed as B/(A+B+C) percentage
+            - For accurate results, spectra should be thickness-normalized to 1 cm
+            - The component fitting includes linear offset correction
+
+        Example:
+            ```python
+            diamond = Diamond_Spectrum.from_file("sample.csv")
+            diamond.fit_baseline()
+            diamond.normalize_diamond()
+            diamond.Nitrogen_fit(plot_fit=True)
+            print(f"Total nitrogen: {diamond.nitrogen_dict['Total_N ppm']} ppm")
+            print(f"Aggregation state: {diamond.nitrogen_dict['B_percent']}% B")
+            ```
+
+        References:
+            Based on methodology developed by D. Fisher (De Beers Technologies, Maidenhead)
+            for the CAXBDY97n Excel spreadsheet and further refined by Liggins (2010).
+            Inspired By Diamap Program by Howell et al.
+            and work By Specht et al.
+        """
         wn_low = 950
         wn_high = 1350  # 1400
 
@@ -404,6 +581,46 @@ class Diamond_Spectrum(Spectrum):
         }
 
     def measure_3107_peak(self):
+        """
+        Measures and quantifies the hydrogen-related 3107 cm⁻¹ peak and adjacent 3085 cm⁻¹ peak.
+
+        This method analyzes the 3060-3180 cm⁻¹ region to identify and measure hydrogen-related
+        defect peaks in the diamond spectrum. The 3107 cm⁻¹ peak is the most common hydrogen-related
+        feature in natural diamonds and is associated with the N3VH defect (nitrogen-vacancy-hydrogen
+        complex). The method:
+
+        1. Applies specialized baseline correction optimized for this spectral region
+        2. Integrates the peak areas at 3107 cm⁻¹ and 3085 cm⁻¹
+        3. Normalizes the areas by the diamond thickness factor if available
+
+        The results are stored as attributes in the Diamond_Spectrum object, allowing for
+        subsequent analysis of hydrogen content and defect correlations.
+
+        No parameters are required as the method uses the spectral data already stored in the object.
+
+        Attributes Set:
+            If thickness normalization has been performed (typeIIA_ratio exists):
+                normed_area_3107 (float): Thickness-normalized area of the 3107 cm⁻¹ peak
+                normed_area_3085 (float): Thickness-normalized area of the 3085 cm⁻¹ peak
+            Otherwise:
+                area_3107 (float): Raw area of the 3107 cm⁻¹ peak
+                area_3085 (float): Raw area of the 3085 cm⁻¹ peak
+
+        Notes:
+            - The method automatically applies appropriate baseline correction parameters
+              optimized for the 3107 cm⁻¹ region
+            - For accurate quantification, the spectrum should be thickness-normalized using
+              normalize_diamond() before calling this method
+            - The 3107 cm⁻¹ peak is often used as an indicator of natural versus synthetic
+              origin in certain diamond types
+            - Additional hydrogen-related peaks (e.g., 3237 cm⁻¹, 2785 cm⁻¹) are mentioned
+              in comments but not currently measured by this method
+
+        See Also:
+            normalize_diamond: For thickness normalization
+            measure_platelets_and_adjacent: For measuring platelet-related peaks
+            measure_amber_center: For measuring amber center features
+        """
         spectrum = self.select_range(3060, 3180)
         baseline = self.select_range(3060, 3180).median_filter(21).baseline_ASLS(lam=0.1, p=6e-6)
         subtracted = spectrum - baseline
@@ -431,6 +648,58 @@ class Diamond_Spectrum(Spectrum):
         plot=False,
         return_peak_dict=True,
     ):
+        """
+        Analyzes the platelet peak and adjacent features in the 1340-1500 cm⁻¹ region of diamond spectra.
+
+        This method performs multi-stage baseline correction and peak detection to identify and measure:
+        1. The B' platelet peak (typically 1360-1375 cm⁻¹), which correlates with aggregated nitrogen
+           and provides information about diamond formation and treatment history
+        2. The 1405 cm⁻¹ peak, is thought to be the bending mode of N3VH the same defect with a stretching mode at 3107
+
+        The method applies specialized baseline corrections that are optimized for isolating these
+        features from the complex spectral background in this region.
+
+        Args:
+            baseline1_param (dict, optional): Parameters for the initial ASLS baseline correction.
+                Defaults to {"lam": 1000, "p": 0.001}.
+            find_peaks_params (dict, optional): Parameters for the peak finding algorithm.
+                If empty, the method automatically sets height and prominence thresholds based on
+                local noise levels. Defaults to {}.
+            plot (bool, optional): If True, plots the baseline-corrected spectra and intermediate
+                processing steps. Useful for method verification. Defaults to False.
+            return_peak_dict (bool, optional): If True, returns the complete peak information
+                dictionary from scipy.signal.find_peaks. Defaults to True.
+
+        Returns:
+            dict or None: If return_peak_dict is True, returns a dictionary of peak properties
+            including positions, heights, prominences, and widths. Otherwise returns None.
+
+        Attributes Set:
+            If thickness normalization has been performed (typeIIA_ratio exists):
+                normed_area_platelet (float): Thickness-normalized area of the platelet peak
+                normed_height_platelet (float): Thickness-normalized height of the platelet peak
+                normed_area_1405 (float): Thickness-normalized area of the 1405 cm⁻¹ peak
+                normed_height_1405 (float): Thickness-normalized height of the 1405 cm⁻¹ peak
+            Otherwise:
+                area_platelet (float): Raw area of the platelet peak
+                height_platelet (float): Raw height of the platelet peak
+                area_1405 (float): Raw area of the 1405 cm⁻¹ peak
+                height_1405 (float): Raw height of the 1405 cm⁻¹ peak
+
+            platelet_peak_position (float): Wavenumber position of the platelet peak
+
+        Notes:
+            - The platelet peak is often used in diamond research to calculate a regularity factor
+              when combined with B-center nitrogen content
+            - For accurate results, the spectrum should be thickness-normalized using normalize_diamond()
+              before calling this method
+            - If no platelet peak is found, corresponding attributes will not be set
+            - The 1405 cm⁻¹ peak is only measured if its height exceeds twice the local noise level
+
+        See Also:
+            Nitrogen_fit: For determining nitrogen content
+            normalize_diamond: For thickness normalization
+        """
         # get platelet peak parameters and identify additional peaks in the range from 1340 to 1500
         spec = self.select_range(1340, 1500)
         baseline1 = spec.median_filter(5).baseline_ASLS(**baseline1_param)
@@ -520,6 +789,58 @@ class Diamond_Spectrum(Spectrum):
             return peaks
 
     def measure_amber_center(self, plot_initial=False, plot_subtracted=False):
+        """
+        Analyzes the amber center features in the 4000-5100 cm⁻¹ region of diamond FTIR spectra.
+
+        This method performs sophisticated baseline correction and peak detection to identify and
+        measure amber center features, which are optical defects frequently observed in natural
+        brown diamonds. The method utilizes a multi-stage baseline correction approach to isolate
+        the characteristic absorption peaks in this spectral region.
+
+        The method automatically measures areas of known amber center peaks at:
+        - 4065 cm⁻¹:
+        - 4165 cm⁻¹:
+        - 4211 cm⁻¹:
+        - 4354 cm⁻¹:
+        - 4495 cm⁻¹:
+        - 4660 cm⁻¹:
+        - 4740 cm⁻¹:
+        - 4850 cm⁻¹:
+        - 4950 cm⁻¹:
+        Args:
+            plot_initial (bool optional): Whether to plot the original spectrum and initial
+                baseline. Useful for debugging. Defaults to False.
+            plot_subtracted (bool, optional): Whether to plot the baseline-subtracted spectrum
+                with detected peaks. Defaults to False.
+
+        Returns:
+            dict: Peak properties dictionary with positions, heights, prominences and widths
+                of all detected peaks in the amber center region.
+
+        Attributes Set:
+            amber_center_peak_positions (array): Wavenumber positions of all detected peaks
+
+            If thickness normalization has been performed (typeIIA_ratio exists):
+                amber_center_peak_heights_normed (array): Thickness-normalized heights of all detected peaks
+                amber_center_peak_prominences_normed (array): Thickness-normalized prominences of all peaks
+                amber_XXXX_area_normed (float): Thickness-normalized area of each specific peak,
+                    where XXXX represents the approximate peak position (e.g., amber_4065_area_normed)
+            Else:
+                amber_center_peak_heights (array): Raw heights of all detected peaks
+                amber_center_peak_prominences (array): Raw prominences of all detected peaks
+
+        Notes:
+            - Amber centers are associated with plastic deformation in natural brown diamonds
+            - These features can provide insights into diamond formation conditions and treatment history
+            - For quantitative analysis, the spectrum should be thickness-normalized using
+              normalize_diamond() prior to calling this method
+            - The fine-tuned baseline correction parameters are optimized for typical amber center features
+
+        See Also:
+            normalize_diamond: For thickness normalization
+            find_complex_peaks: For the underlying peak detection algorithm
+        """
+
         peaks_output = self.find_complex_peaks(
             (3990, 6000),
             peak_range=(4000, 5100),

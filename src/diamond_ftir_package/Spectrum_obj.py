@@ -18,14 +18,57 @@ from scipy.ndimage import gaussian_filter1d
 
 @dataclass(order=True)
 class Spectrum:
-    """Spectrum Object with method for common data processing.
-    Most methods support chained calls and returning values inplace.
+    """
+    A comprehensive data class for spectroscopic data processing and analysis.
+
+    The Spectrum class provides methods for common spectroscopic data manipulation, including
+    baseline correction, peak detection, interpolation, integration, filtering, and visualization.
+    Most methods support method chaining and can operate either in-place or by returning new
+    Spectrum objects.
+
+    Attributes:
+        X (np.ndarray): Independent variable data array (typically wavenumber or wavelength).
+        Y (np.ndarray): Dependent variable data array (typically absorbance or intensity).
+        X_Unit (str): Unit for X values (e.g., "cm⁻¹", "nm").
+        Y_Unit (str): Unit for Y values (e.g., "Absorbance", "Intensity").
+        metadata (Dict): Optional dictionary for storing spectrum metadata.
+        kwargs (Dict): Optional dictionary for additional parameters.
+        baseline (np.ndarray): Stores baseline data when baseline correction is applied.
+        initial_X (np.ndarray): Preserves original X data through transformations.
+        initial_Y (np.ndarray): Preserves original Y data through transformations.
+        initial_spectrum (Spectrum): Preserves the complete initial state.
+
+    Notes:
+        - The class automatically ensures X data is in ascending order during initialization
+        - Most processing methods accept an 'inplace' parameter which determines whether
+          to modify the current object or return a new one
+        - Multiple baseline correction algorithms are available for different spectral types
+        - Peak finding methods range from simple detection to complex multi-stage algorithms
+        - Arithmetic operations are supported for combining and manipulating spectra
+
+    Example:
+        ```python
+        # Create a spectrum object
+        spec = Spectrum(X=wavenumbers, Y=absorbance, X_Unit="cm⁻¹", Y_Unit="Absorbance")
+
+        # Process data with method chaining
+        processed = (spec
+                    .interpolate(400, 4000, step=2)
+                    .median_filter(window=5)
+                    .baseline_ALS(lam=1e7, p=0.001, inplace=True))
+
+        # Find and analyze peaks
+        peaks = processed.find_complex_peaks(
+            noise_range=(3800, 4000),
+            plot_subtracted=True
+        )
+
+        # Calculate area of a specific peak
+        area = processed.select_range(1600, 1700).integrate_peak()
+        ```
 
     Raises:
-        ValueError: _description_
-
-    Returns:
-        _type_: _description_
+        ValueError: If invalid parameters are provided to processing methods.
     """
 
     X: np.ndarray = None  # Sequential array; typically wavenumber or wavelength
@@ -77,8 +120,39 @@ class Spectrum:
         self,
         X_low: Union[int, float, None] = None,
         X_high: Union[int, float, None] = None,
-        inplace: bool = False,
     ):
+        """
+        Calculates the integrated area under the curve within the specified x-axis range.
+
+        Uses Simpson's rule to numerically integrate the spectrum between the specified x-axis bounds.
+        This method is useful for quantitative analysis, calculating peak areas, and comparing
+        relative intensities of spectral features.
+
+        Args:
+            X_low (Union[int, float, None], optional): The lower bound of the x-axis range to integrate.
+                If None, uses the minimum x-value in the spectrum. Defaults to None.
+            X_high (Union[int, float, None], optional): The upper bound of the x-axis range to integrate.
+                If None, uses the maximum x-value in the spectrum. Defaults to None.
+
+        Returns:
+            float: The integrated area under the curve in the specified range. Units are
+            the product of X and Y units (e.g., if X is in cm⁻¹ and Y is absorbance,
+            the result will be in absorbance·cm⁻¹).
+
+        Example:
+            ```python
+            # Calculate the area of a specific peak
+            area = spectrum.integrate_peak(1600, 1700)
+            print(f"The peak area is {area:.2f}")
+
+            # Calculate the total area of the spectrum
+            total_area = spectrum.integrate_peak()
+            ```
+
+        Notes:
+            The integration uses scipy's implementation of Simpson's rule for numerical
+            integration, which provides good accuracy for most spectroscopic data.
+        """
         # I should figure out how to include baselines in data.
         if X_low == None:  # Assume Whole Spectrum is to be intergated
             X_low = min(self.X)
@@ -94,8 +168,37 @@ class Spectrum:
         self,
         X_low: Union[int, float, None] = None,
         X_high: Union[int, float, None] = None,
-        inplace: bool = False,
     ):
+        """
+        Calculates the average height (intensity) of the spectrum within the specified x-axis range.
+
+        This method is useful for quickly assessing peak heights or average signal levels
+        in a region of interest without performing baseline correction or peak finding.
+
+        Args:
+            X_low (Union[int, float, None], optional): The lower bound of the x-axis range.
+                If None, uses the minimum x-value in the spectrum. Defaults to None.
+            X_high (Union[int, float, None], optional): The upper bound of the x-axis range.
+                If None, uses the maximum x-value in the spectrum. Defaults to None.
+
+        Returns:
+            float: The average y-value (height/intensity) in the specified range.
+                Units match the Y_Unit of the spectrum.
+
+        Example:
+            ```python
+            # Calculate the average height of a specific peak
+            height = spectrum.peak_height(1600, 1700)
+            print(f"The average peak height is {height:.3f}")
+
+            # Calculate the average intensity of the entire spectrum
+            avg_intensity = spectrum.peak_height()
+            ```
+
+        Notes:
+            This is a simple averaging method and does not perform baseline correction.
+            For more accurate peak height measurements, consider subtracting a baseline first.
+        """
         # I should figure out how to include baselines in data.
         if X_low == None:  # Assume Whole Spectrum is to be intergated
             X_low = min(self.X)
@@ -229,6 +332,43 @@ class Spectrum:
             return self
 
     def baseline_ASLS(self, lam: float = 1e6, p: float = 0.0005, inplace: bool = False):
+        """
+        Applies the Asymmetric Least Squares Smoothing baseline correction using PyBaselines.
+
+        This method uses the Whittaker smoother implementation from the PyBaselines package
+        to calculate a flexible baseline that preferentially fits the lower points of the spectrum.
+        This algorithm is particularly effective for spectra with peaks that primarily extend
+        in the positive direction from the baseline.
+
+        Args:
+            lam (float, optional): Smoothing parameter. Controls the flexibility of the baseline.
+                Higher values create smoother, less flexible baselines. Defaults to 1e6.
+            p (float, optional): Asymmetry parameter. Controls the balance between fitting
+                points above vs. below the baseline. Smaller values create baselines that
+                follow the lower points of the data. Defaults to 0.0005.
+            inplace (bool, optional): If True, stores the baseline in the current object's
+                baseline attribute. If False, returns a new Spectrum object containing
+                the baseline. Defaults to False.
+
+        Returns:
+            Spectrum or self: If inplace=False, returns a new Spectrum object with the
+            calculated baseline as Y values. If inplace=True, modifies the current object
+            by setting its baseline attribute and returns self.
+
+        Notes:
+            - For most IR/Raman spectra, the default parameters work well
+            - This implementation uses the optimized version from PyBaselines which is
+              faster than the custom ALS implementation
+            - For spectra with complex baselines, compare results with baseline_ALS or
+              baseline_aggressive_rubberband
+
+        See Also:
+            baseline_ALS: Alternative custom implementation of asymmetric least squares
+
+        References:
+            P. H. C. Eilers, H. F. M. Boelens, "Baseline Correction with Asymmetric Least Squares
+            Smoothing," Leiden University Medical Centre Report (2005).
+        """
         baseline = pybl.whittaker.asls(self.Y, lam=lam, p=p)[0]
 
         if inplace == False:
@@ -238,9 +378,40 @@ class Spectrum:
 
     def baseline_ALS(self, lam: float = 1e6, p: float = 0.0005, niter=10, inplace: bool = False):
         """
-        Asymmetric Least Squares Smoothing" by P. Eilers and H. Boelens in 2005 implemented on stackoverflow by user: sparrowcide
-        https://stackoverflow.com/questions/29156532/python-baseline-correction-library
-        Alternative to the Whitaker Smoother in PyBaselines ASLS, it is a slower process but seems more numerically stable
+        Applies Asymmetric Least Squares Smoothing baseline correction algorithm.
+
+        Implements the method by P. Eilers and H. Boelens (2005). This is an alternative
+        to the Whitaker Smoother in PyBaselines ASLS. It is slower but often more
+        numerically stable for complex spectra.
+
+        Args:
+            lam (float, optional): Smoothing parameter. Controls the flexibility of the
+                baseline - higher values create smoother baselines. Defaults to 1e6.
+            p (float, optional): Asymmetry parameter. Controls the balance between fitting
+                points above vs. below the curve - smaller values create baselines that
+                follow the lower points of the data. Defaults to 0.0005.
+            niter (int, optional): Number of iterations. More iterations may provide better
+                fits but increase computation time. Defaults to 10.
+            inplace (bool, optional): If True, stores the baseline in the current object's
+                baseline attribute. If False, returns a new Spectrum object containing
+                the baseline. Defaults to False.
+
+        Returns:
+            Spectrum or self: If inplace=False, returns a new Spectrum object with the
+            calculated baseline as Y values. If inplace=True, modifies the current object
+            by setting its baseline attribute and returns self.
+
+        Notes:
+            - For spectra with broad peaks, larger `lam` values are recommended
+            - For spectra with sharp peaks or narrow features, consider smaller `lam` values
+            - `p` should typically be in the range of 0.001-0.1 for most spectra
+
+        References:
+            Eilers, P. H. C., & Boelens, H. F. M. (2005). Baseline correction with
+            asymmetric least squares smoothing. Leiden University Medical Centre Report.
+
+            Implemented on stackoverflow by user: sparrowcide
+            https://stackoverflow.com/questions/29156532/python-baseline-correction-library
         """
         y = self.Y
         L = len(y)
@@ -268,6 +439,48 @@ class Spectrum:
     def baseline_aggressive_rubberband(
         self, Y_stretch=0.0001, inplace=False, plot_intermediate=False
     ):
+        """
+        Applies an enhanced rubberband baseline correction with nonlinear distortion.
+
+        This method improves upon the standard rubberband correction by adding a parabolic
+        distortion to the Y values before finding the convex hull, allowing the baseline
+        to better adapt to complex curved backgrounds. The distortion is then subtracted
+        from the resulting baseline.
+
+        Args:
+            Y_stretch (float, optional): Controls the amount of parabolic distortion applied.
+                Higher values create more aggressive baseline curvature. Defaults to 0.0001.
+            inplace (bool, optional): If True, stores the baseline in the current object's
+                baseline attribute. If False, returns a new Spectrum object containing
+                the baseline. Defaults to False.
+            plot_intermediate (bool, optional): If True, plots the distorted spectrum and
+                resulting baseline for visual inspection. Useful for parameter tuning.
+                Defaults to False.
+
+        Returns:
+            Spectrum or self: If inplace==False, returns a new Spectrum object with the
+            calculated baseline as Y values. If inplace==True, modifies the current object
+            by setting its baseline attribute and returns self.
+
+        Notes:
+            - The method calculates a parabolic distortion centered at the midpoint of the X range
+            - The last point of the baseline is adjusted to match the second-to-last point to
+              avoid edge artifacts
+            - Increasing Y_stretch makes the baseline more curved and aggressive
+            - For subtle baselines in relatively flat spectra, use smaller Y_stretch values
+
+        Example:
+            ```python
+            # Calculate baseline and store in the spectrum object
+            spec.baseline_aggressive_rubberband(Y_stretch=0.0002, inplace=True)
+
+            # Subtract baseline from spectrum
+            baseline_corrected = spec - spec.baseline
+
+            # Or calculate and return baseline as a new spectrum
+            baseline = spec.baseline_aggressive_rubberband(Y_stretch=0.0001)
+            ```
+        """
         midpoint_X = round((max(self.X) - min(self.X)) / 2)
         nonlinear_offset = Y_stretch * (self.X - midpoint_X) ** 2
         Y_alt = self.Y + nonlinear_offset
@@ -284,7 +497,44 @@ class Spectrum:
             self.baseline = baseline
 
     def find_peaks(self, *args, **kwargs):
-        # function to find peaks and return their position on the x axis and heights
+        """
+        Identifies peaks in the spectrum data using scipy.signal.find_peaks and returns positions in x-axis units.
+
+        This method wraps scipy.signal.find_peaks functionality while adding spectrum-specific features:
+        - Maps peak indices to corresponding x-axis values
+        - Calculates peak widths in x-axis units when applicable
+        - Preserves all original peak properties with additional metadata
+
+        Args:
+            *args: Positional arguments passed to scipy.signal.find_peaks
+            **kwargs: Keyword arguments passed to scipy.signal.find_peaks
+                Common parameters include:
+                - height (float or tuple): Required height of peaks
+                - threshold (float or tuple): Required threshold of peaks
+                - distance (float): Required minimal horizontal distance between peaks
+                - prominence (float or tuple): Required prominence of peaks
+                - width (float or tuple): Required width of peaks
+                - rel_height (float): Relative height at which peak width is measured (0-1.0)
+
+        Returns:
+            dict: Peak properties dictionary containing:
+                - peaks_idx (array): Indices of peaks in the original spectrum
+                - peaks_wn (array): X-axis values of peaks
+                - widths_wn (array): Peak widths in x-axis units (if widths are calculated)
+                - All other properties returned by scipy.signal.find_peaks (heights, prominences, etc.)
+
+        Notes:
+            For detailed information on peak detection parameters, refer to the scipy.signal.find_peaks documentation:
+            https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.find_peaks.html
+
+        Example:
+            ```python
+            spec = Spectrum(X, Y)
+            # Find peaks with minimum height 0.1 and minimum distance of 5 data points
+            peaks = spec.find_peaks(height=0.1, distance=5)
+            print(f"Found {len(peaks['peaks_wn'])} peaks at wavenumbers: {peaks['peaks_wn']}")
+            ```
+        """
         found_peaks = find_peaks(self.Y, *args, **kwargs)
         peaks_idx = found_peaks[0]
         peaks_wn = self.X[peaks_idx]
