@@ -14,15 +14,23 @@ import scipy.sparse as sparse
 from tenacity import retry  # Function to retry failed fitting algorithms for a set number of times
 from scipy.spatial import ConvexHull
 
-from .Spectrum_obj import Spectrum
-
-from .typeIIA import typeIIA_json
-from .CAXBDY import CAXBDY_json
 
 # import scipy.linalg
 from scipy.optimize import nnls, lsq_linear
 
 import matplotlib.pyplot as plt
+
+try:
+    from .Spectrum_obj import Spectrum
+    from .typeIIA import typeIIA_json
+    from .CAXBDY import CAXBDY_json
+
+except:
+    from Spectrum_obj import Spectrum
+    from typeIIA import typeIIA_json
+    from CAXBDY import CAXBDY_json
+
+# from warnings import deprecated
 
 # %%
 
@@ -132,7 +140,7 @@ class Diamond_Spectrum(Spectrum):
 
         self.interpolated_typeIIA_Spectrum = typeIIA_Spectrum.interpolate(wn_min, wn_max, 1)
 
-    def test_diamond_saturation(self):
+    def test_diamond_saturation(self, saturation_cutoff=2.5, stdev_cut_off=0.5):
         """
         Detects saturation in diamond intrinsic absorption peaks and selects appropriate regions for thickness normalization.
 
@@ -165,13 +173,22 @@ class Diamond_Spectrum(Spectrum):
             test_saturation: Lower-level method that tests individual regions for saturation
         """
         main_diamond_sat = self.test_saturation(
-            X_low=1970, X_high=2040, saturation_cutoff=2.5, stdev_cut_off=0.5
+            X_low=1970,
+            X_high=2040,
+            saturation_cutoff=saturation_cutoff,
+            stdev_cut_off=stdev_cut_off,
         )
         secondary_diamond_sat = self.test_saturation(
-            X_low=2400, X_high=2575, saturation_cutoff=2.5, stdev_cut_off=0.5
+            X_low=2400,
+            X_high=2575,
+            saturation_cutoff=saturation_cutoff,
+            stdev_cut_off=stdev_cut_off,
         )
         third_diamond_sat = self.test_saturation(
-            X_low=3000, X_high=3500, saturation_cutoff=2.5, stdev_cut_off=0.5
+            X_low=3000,
+            X_high=3500,
+            saturation_cutoff=saturation_cutoff,
+            stdev_cut_off=stdev_cut_off,
         )
 
         if main_diamond_sat == False:
@@ -209,7 +226,13 @@ class Diamond_Spectrum(Spectrum):
     # def baseline_error_diamond_fit(self,ideal_diamond = typeIIA_Spectrum, data_mask = fit_mask_idx):
     #         self.baseline_ASLS(lam = 1000000, p = 0.0005)
 
-    def fit_diamond_peaks(self, baseline_algorithm: str = "Whittaker", inplace: bool = False):
+    def fit_diamond_peaks(
+        self,
+        baseline_algorithm: str = "Whittaker",
+        inplace: bool = False,
+        saturation_cutoff=2.5,
+        stdev_cut_off=0.5,
+    ):
         """
         Fits a sophisticated baseline to diamond spectra and calculates thickness normalization factor.
 
@@ -250,7 +273,7 @@ class Diamond_Spectrum(Spectrum):
             normalize_diamond: Uses the typeIIA_ratio to create a thickness-normalized spectrum
         """
         try:
-            fit_mask_idx = self.test_diamond_saturation()
+            fit_mask_idx = self.test_diamond_saturation(saturation_cutoff, stdev_cut_off)
 
         except Exception as e:
             print(e)
@@ -351,12 +374,20 @@ class Diamond_Spectrum(Spectrum):
                 "Fit_ratio": fit_ratio,
             }
 
-    def fit_baseline(self):
+    def fit_baseline(self, saturation_cutoff=2.5, stdev_cut_off=0.5):
         try:
-            self.fit_diamond_peaks(baseline_algorithm="Whittaker", inplace=True)
+            self.fit_diamond_peaks(
+                baseline_algorithm="Whittaker",
+                inplace=True,
+            )
 
         except (np.linalg.LinAlgError, RuntimeError) as e:
-            self.fit_diamond_peaks(baseline_algorithm="ALS", inplace=True)
+            self.fit_diamond_peaks(
+                baseline_algorithm="ALS",
+                inplace=True,
+                saturation_cutoff=saturation_cutoff,
+                stdev_cut_off=stdev_cut_off,
+            )
             if e is np.linalg.LinAlgError:
                 print(e)
                 print("error caught. Fitting Baseline with alternate baseline function")
@@ -386,7 +417,7 @@ class Diamond_Spectrum(Spectrum):
             print(e)
             "Diamond Spectrum object must have a baseline and typeIIA_ratio fit prior to using this method, try using the fit_baseline() method before calling this"
 
-    def Nitrogen_fit(self, CAXBDY=CAXBDY, plot_fit=False, max_C_or_B=0.1):
+    def Nitrogen_fit(self, CAXBDY=CAXBDY, plot_fit=False, max_C_or_B=0.01):
         """
         Quantifies nitrogen content and aggregation state using the CAXBDY component fitting method.
 
@@ -497,6 +528,7 @@ class Diamond_Spectrum(Spectrum):
             type1a_factor = max([params[1], params[3]])
 
             # Restrict Final N-Fit  if B centers are greater than C centers and vice versa
+            # Type 1b fits
             if B_Nitrogen / (A_Nitrogen + B_Nitrogen) < C_Nitrogen / (C_Nitrogen + A_Nitrogen):
                 bounds2 = np.array(
                     [
@@ -511,7 +543,7 @@ class Diamond_Spectrum(Spectrum):
                     ]
                 ).T
 
-            else:
+            else:  # type 1a fits
                 # C centers limited to less than 10% of B centers
                 bounds2 = np.array(
                     [
@@ -580,6 +612,9 @@ class Diamond_Spectrum(Spectrum):
             "spec_intensity": spec_intensity,
         }
 
+    # @deprecated(
+    #     "This method will be removed and replaced with a more general function for quantifying diamond hydrogen defects: Measure_H_defects()"
+    # )
     def measure_3107_peak(self):
         """
         Measures and quantifies the hydrogen-related 3107 cm⁻¹ peak and adjacent 3085 cm⁻¹ peak.
@@ -640,6 +675,69 @@ class Diamond_Spectrum(Spectrum):
             self.area_3085 = area_3085
 
     # Alt Peaks 3085,
+
+    def measure_H_peaks(self, plot=False):
+        """
+        Measures and quantifies the hydrogen-related 3107 cm⁻¹ peak and adjacent 3085 cm⁻¹ peak.
+
+        This method analyzes the 3060-3180 cm⁻¹ region to identify and measure hydrogen-related
+        defect peaks in the diamond spectrum. The 3107 cm⁻¹ peak is the most common hydrogen-related
+        feature in natural diamonds and is associated with the N3VH defect (nitrogen-vacancy-hydrogen
+        complex). The method:
+
+        1. Applies specialized baseline correction optimized for this spectral region
+        2. Integrates the peak areas at 3107 cm⁻¹ and 3085 cm⁻¹
+        3. Normalizes the areas by the diamond thickness factor if available
+
+        The results are stored as attributes in the Diamond_Spectrum object, allowing for
+        subsequent analysis of hydrogen content and defect correlations.
+
+        No parameters are required as the method uses the spectral data already stored in the object.
+
+        Attributes Set:
+            If thickness normalization has been performed (typeIIA_ratio exists):
+                normed_area_3107 (float): Thickness-normalized area of the 3107 cm⁻¹ peak
+                normed_area_3085 (float): Thickness-normalized area of the 3085 cm⁻¹ peak
+            Otherwise:
+                area_3107 (float): Raw area of the 3107 cm⁻¹ peak
+                area_3085 (float): Raw area of the 3085 cm⁻¹ peak
+
+        Notes:
+            - The method automatically applies appropriate baseline correction parameters
+              optimized for the 3107 cm⁻¹ region
+            - For accurate quantification, the spectrum should be thickness-normalized using
+              normalize_diamond() before calling this method
+            - The 3107 cm⁻¹ peak is often used as an indicator of natural versus synthetic
+              origin in certain diamond types
+            - Additional hydrogen-related peaks (e.g., 3237 cm⁻¹, 2785 cm⁻¹) are mentioned
+              in comments but not currently measured by this method
+
+        See Also:
+            normalize_diamond: For thickness normalization
+            measure_platelets_and_adjacent: For measuring platelet-related peaks
+            measure_amber_center: For measuring amber center features
+        """
+        spectrum = self.select_range(3060, 3180)
+        baseline = self.select_range(3060, 3180).median_filter(21).baseline_ASLS(lam=0.1, p=6e-6)
+        subtracted = spectrum - baseline
+        area_3107 = subtracted.integrate_peak(3103, 3110)  # (3100, 3115)
+        area_3085 = subtracted.integrate_peak(3082, 3088)
+
+        # Maybe add NVH0 (3123 cm-1), and then list all peaks above a certain prominence
+        # 3237, 3107,and 2785
+
+        if plot == True:
+            spectrum.plot()
+            baseline.plot()
+
+        if self.typeIIA_ratio != None:
+            self.normed_area_3107 = area_3107 / self.typeIIA_ratio
+
+            self.normed_area_3085 = area_3085 / self.typeIIA_ratio
+
+        else:
+            self.area_3107 = area_3107
+            self.area_3085 = area_3085
 
     def measure_platelets_and_adjacent(
         self,
