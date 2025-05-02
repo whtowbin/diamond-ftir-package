@@ -567,7 +567,7 @@ class Diamond_Spectrum(Spectrum):
         except ValueError as e:
             print("Value Error")
             print(e)
-            params = np.zeros(5)
+            params = np.zeros(6)
 
         params = np.round(params, 8)
         C_comp = params[0]
