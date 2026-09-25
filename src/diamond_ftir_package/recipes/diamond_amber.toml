@@ -1,0 +1,63 @@
+name = "diamond_amber"
+description = """EXAMPLE cluster: amber-centre bands 4000-5100 cm-1 fitted jointly with
+Gaussians after a local ASLS baseline. A new fitting method, not a reproduction of
+measure_amber_center. Validate before relying on it.
+[CITATION NEEDED: amber-centre band positions]"""
+x_unit = "cm-1"
+normalize_by = "thickness"
+
+[[features]]
+name = "amber"
+region = [3990, 5150]
+model = "gaussian"
+
+[[features.baseline]]
+method = "asls"
+lam = 1e5
+p = 0.0005
+median_filter = 5
+
+[[features.peaks]]
+name = "4065"
+center = 4060
+fwhm = 20
+
+[[features.peaks]]
+name = "4165"
+center = 4160
+fwhm = 20
+
+[[features.peaks]]
+name = "4211"
+center = 4211
+fwhm = 20
+
+[[features.peaks]]
+name = "4354"
+center = 4354
+fwhm = 20
+
+[[features.peaks]]
+name = "4495"
+center = 4495
+fwhm = 10
+
+[[features.peaks]]
+name = "4660"
+center = 4660
+fwhm = 40
+
+[[features.peaks]]
+name = "4740"
+center = 4740
+fwhm = 40
+
+[[features.peaks]]
+name = "4850"
+center = 4850
+fwhm = 10
+
+[[features.peaks]]
+name = "4950"
+center = 4950
+fwhm = 40

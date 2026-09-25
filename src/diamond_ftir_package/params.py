@@ -286,6 +286,13 @@ class AnalysisParams:
     run_hydrogen: bool = True
     run_platelets: bool = True
     run_amber: bool = False
+    recipes: tuple[str, ...] = field(
+        default=(),
+        metadata={
+            "description": "Extra analysis recipes to run: built-in names (see "
+            "core.builtin_recipes) or paths to .toml/.json recipe files."
+        },
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -303,6 +310,10 @@ class AnalysisParams:
                 value = sub_type(
                     **{k: _restore(sub_type, k, v) for k, v in value.items()}
                 )
+            elif isinstance(value, list):
+                value = tuple(
+                    value
+                )  # JSON lists back to the tuple fields (e.g. recipes)
             kwargs[f.name] = value
         return cls(**kwargs)
 

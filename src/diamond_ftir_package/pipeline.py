@@ -7,11 +7,13 @@ they always produce identical numbers for identical :class:`AnalysisParams`.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from .core import Recipe, resolve_recipe, run_recipe
 from .DiamondSpectrum import Diamond_Spectrum
 from .params import AnalysisParams
 
@@ -123,6 +125,18 @@ def run_analysis(
         )
         row["Normed_1405_Area"] = getattr(spectrum, "normed_area_1405", np.nan)
 
+    for ref in params.recipes:
+        recipe = ref if isinstance(ref, Recipe) else _cached_recipe(str(ref))
+        result = run_recipe(
+            spectrum.X, spectrum.Y, recipe, thickness=spectrum.typeIIA_ratio
+        )
+        clash = set(result.values) & set(row)
+        if clash:
+            raise ValueError(
+                f"recipe '{recipe.name}' output names clash with {sorted(clash)}"
+            )
+        row.update(result.values)
+
     if params.run_amber:
         spectrum.measure_amber_center(params=params.amber)
         for label, _, _ in params.amber.bands:
@@ -131,6 +145,17 @@ def run_analysis(
             )
 
     return row
+
+
+@lru_cache(maxsize=32)
+def _cached_recipe_at(ref: str, mtime: float):
+    return resolve_recipe(ref)
+
+
+def _cached_recipe(ref: str):
+    """Load a recipe once per process (re-read if the file changed)."""
+    path = Path(ref)
+    return _cached_recipe_at(ref, path.stat().st_mtime if path.exists() else 0.0)
 
 
 def quality_flags(spectrum: Diamond_Spectrum, d) -> dict[str, Any]:

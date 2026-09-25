@@ -40,3 +40,16 @@ def test_csv_with_and_without_header_load_identically(tmp_path):
     xb, yb = read_two_columns(tmp_path / "without.csv")
     assert len(xa) == len(xb) == len(s.X)
     np.testing.assert_array_equal(ya, yb)
+
+
+def test_run_with_builtin_recipe_adds_columns(tmp_path):
+    _write_csv(
+        tmp_path / "s-1.csv", a_ppm=200, b_ppm=300, noise=0.0005, h3107_height=0.5
+    )
+    out = tmp_path / "out.csv"
+    assert (
+        main(["run", str(tmp_path), "-o", str(out), "--recipe", "diamond_hydrogen"])
+        == 0
+    )
+    table = pd.read_csv(out)
+    assert "H.3107.area" in table.columns

@@ -28,6 +28,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--amber", action="store_true", help="Also measure amber-centre bands."
     )
+    run.add_argument(
+        "--recipe",
+        action="append",
+        default=[],
+        help="Extra analysis recipe (built-in name or .toml/.json file); repeatable.",
+    )
 
     mp = sub.add_parser("map", help="Analyse an OMNIC .map file pixel by pixel.")
     mp.add_argument("path", type=Path, help="The .map file.")
@@ -68,9 +74,27 @@ def build_parser() -> argparse.ArgumentParser:
     mp.add_argument(
         "--no-examples", action="store_true", help="Skip example fit plots."
     )
+    mp.add_argument(
+        "--recipe",
+        action="append",
+        default=[],
+        help="Extra analysis recipe (built-in name or .toml/.json file); repeatable.",
+    )
 
     sub.add_parser("defaults", help="Print the default settings as JSON.")
     return parser
+
+
+def _recipe_ref(ref: str) -> str:
+    """Built-in names stay as they are; files become absolute paths."""
+    from .core import builtin_recipes, resolve_recipe
+
+    if ref not in builtin_recipes():
+        ref = str(Path(ref).resolve())
+    problems = resolve_recipe(ref).validate()
+    if problems:
+        raise SystemExit(f"recipe {ref}: " + "; ".join(problems))
+    return ref
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,6 +115,10 @@ def main(argv: list[str] | None = None) -> int:
         params = AnalysisParams.from_dict(json.loads(args.params.read_text()))
     if args.amber:
         params.run_amber = True
+    if args.recipe:
+        params.recipes = tuple(params.recipes) + tuple(
+            _recipe_ref(r) for r in args.recipe
+        )
 
     files = collect_files(args.path)
     if not files:
@@ -125,6 +153,10 @@ def run_map(args: argparse.Namespace) -> int:
         map_params.n_jobs = args.jobs
     if args.baseline_search:
         params.diamond.baseline_search = args.baseline_search
+    if args.recipe:
+        params.recipes = tuple(params.recipes) + tuple(
+            _recipe_ref(r) for r in args.recipe
+        )
     if args.baseline_method:
         params.diamond.baseline_method = args.baseline_method
     if args.strategy:
