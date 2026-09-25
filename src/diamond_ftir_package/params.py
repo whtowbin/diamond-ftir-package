@@ -134,9 +134,16 @@ class NitrogenParams:
         0.624332796,
         "ppm N per cm-1 of C-component absorption (before resolution correction).",
     )
-    # [CITATION NEEDED: D-component limit relative to B (Woods correlation)]
+    # D limit: Woods G.S. (1986) Proc. R. Soc. Lond. A 407, 219-238 (0.365). DiaMap: 0.435.
     d_limit: float = _p(
-        0.435, "Max D-component size relative to the major component in type IaAB fits."
+        0.365,
+        "Max D-component size relative to B in type IaAB fits: 0.365 (Woods 1986, as used by "
+        "Speich et al. 2018 and QUIDDIT). DiaMap uses 0.435 (source unknown; see docs).",
+    )
+    resolution_cm: float = _p(
+        0.0,
+        "Instrument spectral resolution (cm-1) for the C-centre factor. 0 = read it from the "
+        "file metadata or name (e.g. '4wnRes'), else use the original point spacing (flagged).",
     )
 
 
@@ -218,10 +225,9 @@ class ThermometryParams:
         "experimental data (preferred), or 'natural' diamonds only.",
     )
     quiddit_compatible: bool = _p(
-        True,
-        "Fit the platelet region exactly as QUIDDIT does (including its 1332 cm-1 peak "
-        "quirk), so areas match QUIDDIT and the thermometer calibration. Off: corrected "
-        "fit, about 3% larger platelet areas.",
+        False,
+        "Off (default): corrected platelet fit. On: reproduce QUIDDIT exactly, including its "
+        "1332 cm-1 peak slip (platelet areas about 3% smaller; T_P about 1-4 C higher).",
     )
 
 

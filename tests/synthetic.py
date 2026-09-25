@@ -40,7 +40,7 @@ def make_spectrum(
 
     comps = np.zeros_like(x)
     grid = CAXBDY.index.to_numpy()
-    c_corr = C_center_wn_spacing_correction(spacing)
+    c_corr = C_center_wn_spacing_correction(2 * spacing)  # resolution ~ 2 x spacing
     amounts = {
         "A": a_ppm / A_PPM_PER_COMP,
         "B": b_ppm / B_PPM_PER_COMP,

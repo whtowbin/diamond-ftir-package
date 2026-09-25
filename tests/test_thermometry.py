@@ -113,3 +113,14 @@ def test_pipeline_adds_temperatures_when_duration_given():
 def test_snac_model_runs_on_example_diamond():
     model = th.snac_cooling_model(3520, 1860, 0, 625, 0.863, 801, 0.197, dt=5)
     assert model is not None
+
+
+def test_platelet_size_calibration_speich_2017():
+    # D = 221 / (x - 1360) nm; AR = 11.9 / (D + 19.6) + 0.4
+    assert th.platelet_diameter_nm(1378.0) == pytest.approx(221 / 18)
+    assert np.isnan(th.platelet_diameter_nm(1359.0))
+    assert th.platelet_aspect_ratio(20.4) == pytest.approx(11.9 / 40 + 0.4)
+
+
+def test_corrected_platelet_fit_is_the_default():
+    assert AnalysisParams().thermometry.quiddit_compatible is False

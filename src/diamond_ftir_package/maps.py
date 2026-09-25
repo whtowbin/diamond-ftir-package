@@ -42,7 +42,9 @@ def load_map(path: str | Path) -> xr.Dataset:
     """Load an OMNIC ``.map`` file as a Dataset with ``spectra`` on dims (y, x, wn)."""
     from .LoadOmnicMAP import Load_Omnic_Map
 
-    return Load_Omnic_Map(str(path))
+    ds = Load_Omnic_Map(str(path))
+    ds.attrs["source_file"] = Path(path).name
+    return ds
 
 
 def on_sample_mask(spectra: xr.DataArray, map_params: MapParams) -> np.ndarray:
@@ -313,6 +315,7 @@ def process_map(
     ny, nx = spectra.shape[:2]
     mask = on_sample_mask(ds.spectra, map_params)
 
+    params = _with_map_resolution(params, ds)
     run_params, start, thickness, tolerance, info = _plan_run(
         wn, spectra, mask, params, map_params
     )
@@ -341,6 +344,18 @@ def process_map(
     out = _assemble(ds, ny, nx, mask, results, params, map_params, info, jobs, plan)
     _add_thickness_source(out, mask, thickness)
     return out
+
+
+def _with_map_resolution(params: AnalysisParams, ds: xr.Dataset) -> AnalysisParams:
+    """Pixels carry no file name, so take the resolution from the map's name once."""
+    from .DiamondSpectrum import resolution_from_name
+
+    if params.nitrogen.resolution_cm:
+        return params
+    found = resolution_from_name(ds.attrs.get("source_file", ""))
+    if not found:
+        return params
+    return replace(params, nitrogen=replace(params.nitrogen, resolution_cm=found))
 
 
 def _plan_run(wn, spectra, mask, params, map_params):

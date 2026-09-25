@@ -173,3 +173,32 @@ def test_nitrogen_window_wider_than_data_is_clipped_not_zeroed():
     cut.Nitrogen_fit(params=NitrogenParams(wn_low=600, wn_high=1400))
     assert cut.nitrogen_window[0] > 700
     assert cut.nitrogen_dict["Total_N ppm"] > 100
+
+
+def test_find_complex_peaks_does_not_modify_caller_or_default_params():
+    s, _ = make_spectrum(a_ppm=100, noise=0.001)
+    mine = {"width": 2, "rel_height": 0.5, "distance": 5}
+    s.find_complex_peaks(
+        (3990, 6000),
+        peak_range=(4000, 5100),
+        noise_range=(4000, 5000),
+        find_peaks_params=mine,
+        plot_peak_locations=False,
+    )
+    assert "height" not in mine
+    s.find_complex_peaks(
+        (3990, 6000),
+        peak_range=(4000, 5100),
+        noise_range=(4000, 5000),
+        plot_peak_locations=False,
+    )
+    import inspect
+
+    from diamond_ftir_package import Spectrum
+
+    assert (
+        inspect.signature(Spectrum.find_complex_peaks)
+        .parameters["find_peaks_params"]
+        .default
+        is None
+    )

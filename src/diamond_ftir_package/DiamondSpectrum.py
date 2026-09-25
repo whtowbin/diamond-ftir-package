@@ -408,6 +408,30 @@ class Diamond_Spectrum(Spectrum):
             return normalized_spectrum
         self.normalized_spectrum = normalized_spectrum
 
+    def instrument_resolution(self, setting: float = 0.0) -> tuple[float, str]:
+        """Instrument resolution (cm-1) and where it came from.
+
+        Order: an explicit setting; a 'resolution' entry in the file metadata; the file
+        name (e.g. '4wnRes'); otherwise twice the ORIGINAL point spacing (before
+        interpolation; Nyquist), flagged as assumed. Resolution is the instrument setting,
+        about twice the sampling interval; OMNIC may also zero-fill, making the spacing
+        smaller still. Set it explicitly when it matters (C-centres).
+        """
+        if setting and setting > 0:
+            return float(setting), "setting"
+        meta = self.metadata or {}
+        for key in ("resolution", "Resolution"):
+            if meta.get(key):
+                return float(meta[key]), "file metadata"
+        for key in ("Filename", "filename", "Title", "source_file"):
+            found = resolution_from_name(meta.get(key, "")) if meta.get(key) else None
+            if found:
+                return found, "file name"
+        # Nyquist: resolution is about twice the sampling interval. Zero-filled data have a
+        # smaller spacing still, so this can underestimate; it is flagged.
+        spacing = float(np.median(np.abs(np.diff(self.initial_X))))
+        return 2.0 * spacing, "2 x point spacing (assumed)"
+
     def _store_measurement(self, name: str, value) -> None:
         """Set ``normed_<name>`` if thickness-normalised, otherwise ``<name>``."""
         if self.typeIIA_ratio is not None:
@@ -490,8 +514,9 @@ class Diamond_Spectrum(Spectrum):
 
         spec_intensity = spec.select_range(wn_low, wn_high + 1).Y
 
-        wn_spacing = self.initial_X[1] - self.initial_X[0]
-        C_correction = C_center_wn_spacing_correction(wn_spacing)
+        resolution, source = self.instrument_resolution(params.resolution_cm)
+        self.nitrogen_resolution = (resolution, source)
+        C_correction = C_center_resolution_correction(resolution)
 
         # I should make the bounds limit the height of C or B depending on if its a typa 1aAB or 1b diamond
         bounds = np.array(
@@ -1210,11 +1235,38 @@ def select_baseline_func(baseline_algorithm="Whittaker"):
     return baseline_func
 
 
-def C_center_wn_spacing_correction(wn_spacing: float) -> float:
-    # [CITATION NEEDED: verify Liggins 2010 PhD thesis (Warwick) as the source of this fit]
-    return (
-        9.7043 * wn_spacing + 25.304
-    )  # Function derived from Linear fit to values determined in Liggins et al. 2010 Phd Thesis
+# C-centre calibration factor versus instrument resolution (cm-1), as tabulated in DiaMap
+# (Howell et al. 2012) "from Liggins 2010 PhD thesis". [CITATION NEEDED: Liggins 2010 thesis]
+C_CENTRE_RESOLUTION_TABLE = ((0.5, 30.0), (1.0, 37.0), (2.0, 42.0), (4.0, 65.0))
+
+
+def C_center_resolution_correction(resolution: float) -> float:
+    """C-centre factor for the instrument's spectral resolution (cm-1), NOT the point spacing
+    and NOT the 1 cm-1 analysis grid: interpolation does not change the true resolution.
+
+    Piecewise-linear through Liggins' tabulated values; outside 0.5-4 cm-1 the end segments
+    are extended (flagged in docs as an extrapolation).
+    """
+    res = np.array([r for r, _ in C_CENTRE_RESOLUTION_TABLE])
+    fac = np.array([f for _, f in C_CENTRE_RESOLUTION_TABLE])
+    r = float(resolution)
+    if r < res[0]:
+        return float(fac[0] + (r - res[0]) * (fac[1] - fac[0]) / (res[1] - res[0]))
+    if r > res[-1]:
+        return float(fac[-1] + (r - res[-1]) * (fac[-1] - fac[-2]) / (res[-1] - res[-2]))
+    return float(np.interp(r, res, fac))
+
+
+# Earlier name; the argument must be the instrument resolution.
+C_center_wn_spacing_correction = C_center_resolution_correction
+
+
+def resolution_from_name(name: str) -> float | None:
+    """Resolution written in an OMNIC-style file name, e.g. '..._4wnRes_...' or '..._2res_...'."""
+    import re
+
+    m = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:wn|cm-?1)?\s*res(?:olution)?(?![a-z])", str(name), re.I)
+    return float(m.group(1)) if m else None
 
 
 # %%

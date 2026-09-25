@@ -106,6 +106,18 @@ def run_analysis(
     if params.run_nitrogen:
         spectrum.Nitrogen_fit(params=params.nitrogen)
         row.update({k: float(v) for k, v in spectrum.nitrogen_dict.items()})
+        resolution, source = spectrum.nitrogen_resolution
+        row["resolution_cm"] = resolution
+        row["resolution_source"] = source
+        if row.get("C_Nitrogen ppm", 0) > 0:
+            notes = [row.get("QA", "")]
+            if source.endswith("(assumed)"):
+                notes.append(
+                    "C-centre factor: resolution estimated as 2 x point spacing"
+                )
+            if resolution > 4.0:
+                notes.append("C-centre factor extrapolated beyond 4 cm-1 resolution")
+            row["QA"] = "; ".join(filter(None, notes))
 
     if params.run_hydrogen:
         spectrum.measure_3107_peak(params=params.hydrogen)

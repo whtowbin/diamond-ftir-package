@@ -132,6 +132,20 @@ def platelet_regularity(platelet_area, platelet_position, b_ppm) -> dict[str, An
     }
 
 
+def platelet_diameter_nm(position):
+    """Average platelet diameter (nm) from the B′ peak position x (cm⁻¹):
+    D = 221 / (x − 1360) (Speich et al. 2017, Lithos 278-281, Eq. 2). NaN for x ≤ 1360."""
+    x = np.asarray(position, dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(x > 1360, 221.0 / (x - 1360.0), np.nan)[()]
+
+
+def platelet_aspect_ratio(diameter_nm):
+    """Average platelet aspect ratio (minor/major diameter): AR = 11.9 / (D + 19.6) + 0.4
+    with D in nm (Speich et al. 2017)."""
+    return (11.9 / (np.asarray(diameter_nm, dtype=float) + 19.6) + 0.4)[()]
+
+
 # ---------------------------------------------------------------------------- peak shapes
 def _half_lorentz(x, x0, height, hwhm):
     return height * hwhm**2 / ((x - x0) ** 2 + hwhm**2)
@@ -347,10 +361,14 @@ def thermometry_row(
     if pl is None:
         row |= dict.fromkeys(
             ("platelet_area_qd", "platelet_x0_qd", "platelet_width_qd", "platelet_symmetry_qd",
-             "platelet_P0", "platelet_remaining", "platelet_position_dev", "T_P (C)"), nan)  # fmt: skip
+             "platelet_P0", "platelet_remaining", "platelet_position_dev", "T_P (C)",
+             "platelet_diameter_nm", "platelet_aspect_ratio"), nan)  # fmt: skip
         return row
     reg = platelet_regularity(pl.area, pl.x0, b_ppm)
+    diameter = platelet_diameter_nm(pl.x0)
     row |= {
+        "platelet_diameter_nm": float(diameter),
+        "platelet_aspect_ratio": float(platelet_aspect_ratio(diameter)),
         "platelet_area_qd": pl.area,
         "platelet_x0_qd": pl.x0,
         "platelet_width_qd": pl.width,
