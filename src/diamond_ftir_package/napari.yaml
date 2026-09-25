@@ -1,0 +1,17 @@
+name: diamond-ftir-package
+display_name: Diamond FTIR
+contributions:
+  commands:
+    - id: diamond-ftir-package.read_map
+      python_name: diamond_ftir_package.napari_plugin:get_reader
+      title: Open OMNIC map
+    - id: diamond-ftir-package.inspector
+      python_name: diamond_ftir_package.napari_plugin:SpectrumInspector
+      title: Spectrum inspector and recipe editor
+  readers:
+    - command: diamond-ftir-package.read_map
+      filename_patterns: ["*.map", "*.MAP"]
+      accepts_directories: false
+  widgets:
+    - command: diamond-ftir-package.inspector
+      display_name: Spectrum inspector

@@ -23,6 +23,7 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
 ]
 dependencies = [
+    "lmfit>=1.3.4",
     "matplotlib>=3.7.5",
     "numpy>=1.24.4",
     "pandas>=2.0.3",
@@ -30,6 +31,8 @@ dependencies = [
     "scipy>=1.10.1",
     "seaborn>=0.13.2",
     "tenacity>=9.0.0",
+    "tomli>=2 ; python_full_version < '3.11'",
+    "tomli-w>=1.2.0",
     "xarray>=2023.1.0",
 ]
 
@@ -46,6 +49,21 @@ diamond-ftir = "diamond_ftir_package.cli:main"
 
 [project.gui-scripts]
 diamond-ftir-gui = "diamond_ftir_package.gui:main"
+diamond-ftir-app = "diamond_ftir_package.qtgui.app:main"
+
+[project.entry-points."napari.manifest"]
+diamond-ftir-package = "diamond_ftir_package:napari.yaml"
+
+[project.optional-dependencies]
+gui = [
+    "pyqtgraph>=0.14.0",
+    "pyside6>=6.11.2",
+    "qtpy>=2.4.3",
+]
+napari = [
+    "napari>=0.7.1",
+    "npe2>=0.8.3",
+]
 
 [tool.hatch.version]
 path = "src/diamond_ftir_package/__about__.py"
@@ -98,6 +116,11 @@ exclude_lines = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning:pydantic.*", "ignore:.*json_encoders.*"]
 
 [tool.ruff]
 extend-exclude = ["archive", "src/diamond_ftir_package/SPC"]
+
+[tool.ruff.lint.per-file-ignores]
+# _f() returns dataclasses.field(...) with a description; RUF009 cannot see that.
+"src/diamond_ftir_package/core/recipe.py" = ["RUF009"]
