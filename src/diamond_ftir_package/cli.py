@@ -29,6 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--amber", action="store_true", help="Also measure amber-centre bands."
     )
     run.add_argument(
+        "--duration-ma",
+        type=float,
+        help="Mantle residence time (Ma): adds nitrogen and platelet model temperatures.",
+    )
+    run.add_argument(
         "--recipe",
         action="append",
         default=[],
@@ -75,6 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-examples", action="store_true", help="Skip example fit plots."
     )
     mp.add_argument(
+        "--duration-ma",
+        type=float,
+        help="Mantle residence time (Ma): adds nitrogen and platelet model temperatures.",
+    )
+    mp.add_argument(
         "--recipe",
         action="append",
         default=[],
@@ -115,6 +125,8 @@ def main(argv: list[str] | None = None) -> int:
         params = AnalysisParams.from_dict(json.loads(args.params.read_text()))
     if args.amber:
         params.run_amber = True
+    if args.duration_ma:
+        params.thermometry.duration_ma = args.duration_ma
     if args.recipe:
         params.recipes = tuple(params.recipes) + tuple(
             _recipe_ref(r) for r in args.recipe
@@ -153,6 +165,8 @@ def run_map(args: argparse.Namespace) -> int:
         map_params.n_jobs = args.jobs
     if args.baseline_search:
         params.diamond.baseline_search = args.baseline_search
+    if args.duration_ma:
+        params.thermometry.duration_ma = args.duration_ma
     if args.recipe:
         params.recipes = tuple(params.recipes) + tuple(
             _recipe_ref(r) for r in args.recipe

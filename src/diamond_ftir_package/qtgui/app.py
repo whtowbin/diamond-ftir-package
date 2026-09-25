@@ -48,6 +48,7 @@ SECTIONS = {
     "nitrogen": "Nitrogen",
     "hydrogen": "Hydrogen",
     "platelet": "Platelets",
+    "thermometry": "Thermometry",
 }
 TABLE_COLUMNS = (
     "Filename",

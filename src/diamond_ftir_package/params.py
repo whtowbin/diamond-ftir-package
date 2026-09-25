@@ -23,6 +23,7 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "baseline_strategy": ("per_pixel", "calibrate_fixed", "calibrate_local"),
     "thickness_mode": ("per_pixel", "survey", "known"),
     "thickness_field": ("constant", "plane"),
+    "calibration": ("combined", "natural"),
 }
 
 
@@ -203,6 +204,28 @@ class AmberParams:
 
 
 @dataclass
+class ThermometryParams:
+    """Nitrogen-aggregation and platelet-degradation temperatures (docs/thermometry.md)."""
+
+    duration_ma: float = _p(
+        0.0,
+        "Mantle residence time (Ma) for model temperatures; 0 turns thermometry off. "
+        "Set it from inclusion and eruption ages (Speich et al. 2018, Table 1 has examples).",
+    )
+    calibration: str = _p(
+        "combined",
+        "Platelet thermometer calibration (Speich et al. 2018): 'combined' natural + "
+        "experimental data (preferred), or 'natural' diamonds only.",
+    )
+    quiddit_compatible: bool = _p(
+        True,
+        "Fit the platelet region exactly as QUIDDIT does (including its 1332 cm-1 peak "
+        "quirk), so areas match QUIDDIT and the thermometer calibration. Off: corrected "
+        "fit, about 3% larger platelet areas.",
+    )
+
+
+@dataclass
 class MapParams:
     """How a map is processed (on top of the per-spectrum AnalysisParams)."""
 
@@ -282,6 +305,7 @@ class AnalysisParams:
     hydrogen: HydrogenParams = field(default_factory=HydrogenParams)
     platelet: PlateletParams = field(default_factory=PlateletParams)
     amber: AmberParams = field(default_factory=AmberParams)
+    thermometry: ThermometryParams = field(default_factory=ThermometryParams)
     run_nitrogen: bool = True
     run_hydrogen: bool = True
     run_platelets: bool = True

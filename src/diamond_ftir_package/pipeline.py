@@ -125,6 +125,20 @@ def run_analysis(
         )
         row["Normed_1405_Area"] = getattr(spectrum, "normed_area_1405", np.nan)
 
+    th = params.thermometry
+    if th.duration_ma > 0 and params.run_nitrogen:
+        from .thermometry import thermometry_row
+
+        row |= thermometry_row(
+            spectrum.normalized_spectrum.X,
+            spectrum.normalized_spectrum.Y,
+            row["Total_N ppm"],
+            row["B_Nitrogen ppm"],
+            th.duration_ma,
+            th.calibration,
+            th.quiddit_compatible,
+        )
+
     for ref in params.recipes:
         recipe = ref if isinstance(ref, Recipe) else _cached_recipe(str(ref))
         result = run_recipe(

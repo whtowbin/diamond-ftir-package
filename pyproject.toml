@@ -119,7 +119,7 @@ testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning:pydantic.*", "ignore:.*json_encoders.*"]
 
 [tool.ruff]
-extend-exclude = ["archive", "src/diamond_ftir_package/SPC"]
+extend-exclude = ["archive", "src/diamond_ftir_package/SPC", "src/diamond_ftir_package/_vendor"]
 
 [tool.ruff.lint.per-file-ignores]
 # _f() returns dataclasses.field(...) with a description; RUF009 cannot see that.
