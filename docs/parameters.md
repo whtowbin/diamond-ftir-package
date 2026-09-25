@@ -40,7 +40,8 @@ Generated from `src/diamond_ftir_package/params.py` by `scripts/make_parameter_d
 | `a_ppm_per_cm` | `16.5` | ppm N per cm-1 of A-component absorption. |
 | `b_ppm_per_cm` | `79.4` | ppm N per cm-1 of B-component absorption. |
 | `c_ppm_per_cm` | `0.624332796` | ppm N per cm-1 of C-component absorption (before resolution correction). |
-| `d_limit` | `0.435` | Max D-component size relative to the major component in type IaAB fits. |
+| `d_limit` | `0.365` | Max D-component size relative to B in type IaAB fits: 0.365 (Woods 1986, as used by Speich et al. 2018 and QUIDDIT). DiaMap uses 0.435 (source unknown; see docs). |
+| `resolution_cm` | `0.0` | Instrument spectral resolution (cm-1) for the C-centre factor. 0 = read it from the file metadata or name (e.g. '4wnRes'), else use the original point spacing (flagged). |
 
 ## Hydrogen (3107 / 3085)
 
@@ -76,7 +77,7 @@ Generated from `src/diamond_ftir_package/params.py` by `scripts/make_parameter_d
 |---|---|---|
 | `duration_ma` | `0.0` | Mantle residence time (Ma) for model temperatures; 0 turns thermometry off. Set it from inclusion and eruption ages (Speich et al. 2018, Table 1 has examples). |
 | `calibration` | `combined` | Platelet thermometer calibration (Speich et al. 2018): 'combined' natural + experimental data (preferred), or 'natural' diamonds only. |
-| `quiddit_compatible` | `True` | Fit the platelet region exactly as QUIDDIT does (including its 1332 cm-1 peak quirk), so areas match QUIDDIT and the thermometer calibration. Off: corrected fit, about 3% larger platelet areas. |
+| `quiddit_compatible` | `False` | Off (default): corrected platelet fit. On: reproduce QUIDDIT exactly, including its 1332 cm-1 peak slip (platelet areas about 3% smaller; T_P about 1-4 C higher). |
 
 ## Which measurements run
 

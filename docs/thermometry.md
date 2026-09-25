@@ -41,6 +41,7 @@ few hundred Ma changes T_N only slightly; for short ones it matters.
 | `platelet_remaining` | I(B′) / P0: 1 = regular, below 1 = platelets degraded |
 | `platelet_position_dev` | peak position minus the position expected for the measured area (Eq. 3); regular diamonds 0 ± 2 cm⁻¹ |
 | `T_P (C)` | platelet degradation temperature; empty when no degradation is measurable |
+| `platelet_diameter_nm`, `platelet_aspect_ratio` | average platelet size from the peak position, D = 221 / (x − 1360) nm and AR = 11.9 / (D + 19.6) + 0.4 (Speich et al. 2017) |
 
 ## Equations
 
@@ -84,10 +85,12 @@ peak is fitted the same way (Speich & Kohn 2020):
 
 **QUIDDIT compatibility.** QUIDDIT's code uses the 1405 peak's height in the Gaussian part
 of the 1332 peak (a slip in `ultimatepsv`).
-- `quiddit_compatible = True` (the default) reproduces this, so areas and temperatures
-  match QUIDDIT and the calibration.
-- `False` uses the corrected model. On the test pixels this gave platelet areas a median
-  2.9% larger (range 0.9-4.7%, one weak peak 38%).
+- The default (`quiddit_compatible = False`) uses the corrected model.
+- `True` reproduces QUIDDIT exactly, so areas match published QUIDDIT numbers.
+
+On 19 map spectra the corrected fit gave platelet areas a median 2.9% larger (range
+0.9-4.7%; one weak peak 38%). That changes T_P by −0.6 to −3.5 °C, well inside the method's
+± 30-50 °C.
 
 ### Validation
 
@@ -97,7 +100,7 @@ of the 1332 peak (a slip in `ultimatepsv`).
 | T_N, paper example (Fig. 8: > 2000 ppm N, 49% B, Diavik peridotitic 3.25 Ga) | 1,093 °C (paper: 1,090 °C) |
 | T_P vs QUIDDIT's formula, same inputs | identical except 0.17 °C (Kelvin offset, 365 vs 365.25-day year) |
 | Paper's worked example (P_t ≈ 1, P0 ≈ 500 cm⁻², 1640 °C) | 66 ka residence (paper: ca. 64 ka, from rounded inputs) |
-| Platelet and 3107 fits vs QUIDDIT's own code on the same 19 normalised map spectra | compatible mode: identical (area ratio 1.0000, position and symmetry differences 0.000); 3107 areas identical |
+| Platelet and 3107 fits vs QUIDDIT's own code on the same 19 normalised map spectra | with `quiddit_compatible=True`: identical (area ratio 1.0000, position and symmetry differences 0.000); 3107 areas identical in both modes |
 | Injected asymmetric platelet peak of known area (synthetic) | recovered within 8%, both modes |
 
 ## Interpreting results: limits from the paper
@@ -125,11 +128,56 @@ model.plot_T_history(); model.save_history("history.csv")
 SNAC is included in `diamond_ftir_package/_vendor/snac` (MIT licence, pinned commit, see
 `VENDORED.md`). It isn't on PyPI, and the PyPI name `snac` belongs to an unrelated package.
 
+## Comparison with DiaMap (Howell et al. 2012)
+
+DiaMap v18 (Howell's Excel workbook, `DiaMap_v18_001_ForNitrogenFitting.xlsx`) was compared
+with this package using the workbook's own worked example.
+
+| quantity | DiaMap | this package | note |
+|---|---|---|---|
+| type IIa scale factor (full pipeline from DiaMap's raw spectrum) | 0.01530 | 0.01697 | joint baseline vs DiaMap's linear baseline |
+| A-centre N (full pipeline) | 848.4 ppm | 768.0 ppm | follows the scale factor (−9.5%) |
+| A / B from DiaMap's own normalised spectrum (package fit, 1001-1350) | 848.4 / 439.3 ppm | 851.1 / 394.5 ppm | DiaMap fits 1001-1399, including the platelet peak |
+| %B | 34.1 | 31.7 | |
+| 3107 height | 60.81 | 54.78 | different local baselines |
+| platelet area I(B′) | 115.0 cm⁻² | 266.0 cm⁻² | different methods (below) |
+| platelet peak position | 1378 | 1377.6 | |
+
+What the comparison showed:
+
+- **The same reference spectra, but not identical.** DiaMap's C, A, B and D component
+  spectra match the package's (QUIDDIT's) in scale (median ratios 0.993-1.001), but differ
+  locally by up to about 6% (B). DiaMap's own solution has a residual of 227.7 with its
+  components and 1,031 with the package's. The small shape differences alone can move B% by a
+  few points.
+- **Platelet area is method-dependent.** DiaMap sums the positive part of (spectrum − a
+  straight baseline between anchor windows, e.g. 1366 and 1414 cm⁻¹, with the 1405 feature
+  removed). QUIDDIT fits a pseudo-Voigt whose Lorentzian tails add area. The thermometer's
+  P0 = 64 × μB was calibrated on QUIDDIT areas, so DiaMap-type areas must not be used with
+  it.
+- **Platelet size.** DiaMap labels the Speich et al. (2017) diameter in μm; the paper gives
+  nm (D = 221 / (x − 1360) nm). The package uses nm.
+- **D-component limit: discrepancy recorded, 0.365 adopted.** DiaMap uses D ≤ 0.435 × B
+  (cell I7 of the *Nitrogen Fit* sheet, no source given). Speich et al. (2018) and QUIDDIT use
+  0.365 × B, citing Woods (1986, *Proc. R. Soc. Lond. A* 407, 219-238), the published source
+  for the D-B relation. The component spectra have the same scaling in both tools, so this is a
+  real difference in the limit, not a units effect. **The package now uses 0.365**
+  (`NitrogenParams.d_limit`; set 0.435 to reproduce DiaMap). Earlier versions of this package
+  used 0.435, copied from DiaMap. In DiaMap's worked example the limit did not bind in the
+  package's fit (both values gave the same result). Where it binds, a lower limit lowers D and
+  can raise B (and so P0 and T_N slightly).
+
 ## Open points
 
-- **D-component limit.** QUIDDIT and Speich et al. (2018) limit D to 0.365 × B (Woods 1986);
-  this package's nitrogen fit uses `d_limit = 0.435`. This affects B and therefore P0. Decide
-  which to use.
+- **D-component limit**: 0.365 adopted (Woods 1986); still to confirm with D. Howell where
+  DiaMap's 0.435 came from, in case it reflects a later calibration.
+- **Is the type IIa factor the thickness, or thickness ÷ 2.303?** DiaMap computes thickness
+  as 2.303 × its type IIa factor (natural-log absorption coefficient). The package and QUIDDIT
+  (normalising to 12.3 at 1992 cm⁻¹) treat the reference as absorbance per cm. Nitrogen ppm
+  and T_P do not depend on this (all three divide by the same fitted factor), but the reported
+  `typeIIA_ratio` and a user-entered known thickness (maps, `thickness_mode="known"`) do. A
+  plate of measured thickness settles it: 1.00 mm should give a factor of about 0.10 in one
+  convention and 0.043 in the other.
 - **QUIDDIT's reference spectra licence.** The QUIDDIT README says "you are free to download
   and use QUIDDIT and all its components", but there is no licence file. Ask the author for
   explicit permission to redistribute the bundled CAXBD / type IIa spectra before a public
@@ -147,6 +195,14 @@ SNAC is included in `diamond_ftir_package/_vendor/snac` (MIT licence, pinned com
   and Inferred Temperatures. *Computers & Geosciences* 144, 104558.
   doi:10.1016/j.cageo.2020.104558
 - Wincott et al. (2026), SNAC. [CITATION NEEDED: full reference]
+- Howell D., O'Neill C.J., Grant K.J., Griffin W.L., Pearson N.J., O'Reilly S.Y. (2012).
+  μ-FTIR mapping: distribution of impurities in different types of diamond growth. *Diamond
+  and Related Materials* 29, 29-36.
+- Howell D., O'Neill C.J., Grant K.J., Griffin W.L., O'Reilly S.Y., Pearson N.J., Stern R.A.,
+  Stachel T. (2012). Platelet development in cuboid diamonds: insights from micro-FTIR
+  mapping. *Contributions to Mineralogy and Petrology* 164, 1011-1025.
+- Woods G.S. (1986). Platelets and the infrared absorption of type Ia diamonds. *Proceedings
+  of the Royal Society of London A* 407, 219-238.
 - Taylor W.R., Jaques A.L., Ridd M. (1990); Taylor W.R., Canil D., Milledge H.J. (1996).
   [CITATION NEEDED: full references]
 - Woods G.S. (1986); Boyd S.R. et al. (1994, 1995); Kohn S.C. et al. (2016); Navon O. et al.

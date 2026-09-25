@@ -39,9 +39,23 @@
       stand-in viewer; a headless napari viewer crashes offscreen with PySide6).
 - [ ] Retire the tkinter GUI once the Qt app has been used in practice.
 
-- [ ] **Thermometry decisions:** default platelet fit (QUIDDIT-compatible vs corrected, ~3%
-      area difference), D-component limit (0.435 vs QUIDDIT's 0.365), and written permission
-      to redistribute QUIDDIT's reference spectra (docs/thermometry.md, open points).
+- [x] Platelet fit default: corrected (quiddit_compatible=False).
+- [ ] **Resolve the D-component discrepancy:** 0.365 (Woods 1986; Speich et al. 2018; QUIDDIT)
+      is now the default; DiaMap uses 0.435 with no source. Ask D. Howell where 0.435 came from
+      and whether it reflects a later calibration; then close or revisit.
+- [ ] **Resolve the thickness question (×2.303?):** DiaMap reports thickness = 2.303 × type IIa
+      factor; the package and QUIDDIT treat the factor as the thickness. Measure a plate of
+      known thickness (1.00 mm → factor ≈ 0.10 or ≈ 0.043). Until then, do not trust
+      `typeIIA_ratio` as a thickness or use `thickness_mode="known"`. N ppm and T_P are not
+      affected.
+- [ ] Record the instrument resolution for existing datasets (C-centre factor): file names
+      cover the maps; single-file CSV/SPA folders need `resolution_cm` set.
+- [ ] **Check Liggins (2010) thesis:** is the C-centre table indexed by true resolution (as DiaMap
+      labels it) or by sampling interval? Some sources mix the two. Changes C ppm by up to ~1.5×.
+- [ ] Confirm the resolution of the CAXBD / type IIa reference spectra (believed ~2 cm⁻¹ on a
+      1 cm⁻¹ grid); consider broadening references to each spectrum's resolution for coarse
+      (4-16 cm⁻¹) data, and test it with the injection method.
+- [ ] Ask L. Speich for written permission to redistribute QUIDDIT's reference spectra.
 - [ ] Validate T_P on diamonds with independent temperature constraints or published
       QUIDDIT results (Speich et al. 2018 samples if spectra are available).
 
