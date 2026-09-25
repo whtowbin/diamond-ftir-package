@@ -14,6 +14,7 @@ TITLES = {
     "hydrogen": "Hydrogen (3107 / 3085)",
     "platelet": "Platelets and the 1405 peak",
     "amber": "Amber centres",
+    "thermometry": "Thermometry",
 }
 
 

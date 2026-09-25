@@ -39,6 +39,12 @@
       stand-in viewer; a headless napari viewer crashes offscreen with PySide6).
 - [ ] Retire the tkinter GUI once the Qt app has been used in practice.
 
+- [ ] **Thermometry decisions:** default platelet fit (QUIDDIT-compatible vs corrected, ~3%
+      area difference), D-component limit (0.435 vs QUIDDIT's 0.365), and written permission
+      to redistribute QUIDDIT's reference spectra (docs/thermometry.md, open points).
+- [ ] Validate T_P on diamonds with independent temperature constraints or published
+      QUIDDIT results (Speich et al. 2018 samples if spectra are available).
+
 ## Later
 - [ ] GUI: edit amber bands in the app (currently via settings JSON only).
 - [ ] Profile a 50-spectrum batch before optimising further; only the nitrogen design matrix is

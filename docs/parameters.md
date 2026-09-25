@@ -70,6 +70,14 @@ Generated from `src/diamond_ftir_package/params.py` by `scripts/make_parameter_d
 |---|---|---|
 | `bands` | `((4065, 4060, 10), (4165, 4160, 10), (4211, 4211, 10), (4354, 4354, 10), (4495, 4495, 5), (4660, 4660, 20), (4740, 4740, 20), (4850, 4850, 5), (4950, 4950, 20))` | Amber-centre bands to integrate as (label, centre, half-width) in cm-1. |
 
+## Thermometry
+
+| Setting | Default | What it does |
+|---|---|---|
+| `duration_ma` | `0.0` | Mantle residence time (Ma) for model temperatures; 0 turns thermometry off. Set it from inclusion and eruption ages (Speich et al. 2018, Table 1 has examples). |
+| `calibration` | `combined` | Platelet thermometer calibration (Speich et al. 2018): 'combined' natural + experimental data (preferred), or 'natural' diamonds only. |
+| `quiddit_compatible` | `True` | Fit the platelet region exactly as QUIDDIT does (including its 1332 cm-1 peak quirk), so areas match QUIDDIT and the thermometer calibration. Off: corrected fit, about 3% larger platelet areas. |
+
 ## Which measurements run
 
 | Setting | Default |

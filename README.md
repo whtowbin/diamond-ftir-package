@@ -99,6 +99,7 @@ Input CSVs need two columns: wavenumber (cm⁻¹) and absorbance.
 | `Normed_1405_Area` | 1405 cm⁻¹ peak area |
 | `Amber_*_Area` | Amber-centre band areas (optional) |
 | `typeIIA_ratio` | Fitted thickness scale against the type IIa reference |
+| `T_N (C)`, `T_P (C)`, `platelet_*` | Nitrogen-aggregation and platelet-degradation temperatures (with `--duration-ma`; see [docs/thermometry.md](docs/thermometry.md)) |
 
 Details: [docs/methods.md](docs/methods.md). Every setting: [docs/parameters.md](docs/parameters.md).
 

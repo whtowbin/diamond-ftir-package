@@ -29,3 +29,8 @@ Search for the marker with `grep -rn "CITATION NEEDED" .`.
 | [ ] | ALS implementation (Stack Overflow) | `baseline_als` | Adapted from user "sparrowcide"; check licence terms |
 | [ ] | SPC file reader | `SPC/` | https://github.com/rohanisaac/spc; check licence and add notice |
 | [~] | Bundled reference data provenance and licence | `CAXBDY.*`, `typeIIA.*` | From QUIDDIT (above); check QUIDDIT licence terms for redistribution. Y component supplied by Maxwell C. Day (Univ. Padova); Y centre first reported by Hainschwang, Fritsch, Notari & Rondeau (2012), Diamond Relat. Mater. 21, 120-126, doi:10.1016/j.diamond.2011.11.002. |
+| [~] | Platelet thermometer (Eqs. 1, 10-13; calibrations) | `thermometry.py` | Speich, Kohn, Bulanova & Smith (2018) Contrib. Mineral. Petrol. 173:39 — cited in docs/thermometry.md |
+| [~] | QUIDDIT platelet and 3107 fitting procedure | `thermometry.fit_platelet`, `fit_3107` | Speich & Kohn (2020) Computers & Geosciences 144:104558 |
+| [ ] | Nitrogen aggregation kinetics constants (81,160 K; 293,608) | `thermometry.nitrogen_temperature` | Taylor et al. 1990; revised Taylor et al. 1996 — full references needed |
+| [ ] | SNAC paper | `_vendor/snac`, `thermometry.snac_cooling_model` | Wincott et al. 2026 — full reference needed |
+| [ ] | D-component limit: package uses 0.435, QUIDDIT/Speich use 0.365 (Woods 1986) | `params.NitrogenParams.d_limit` | decide and cite |
