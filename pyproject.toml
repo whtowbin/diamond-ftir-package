@@ -5,31 +5,47 @@ build-backend = "hatchling.build"
 [project]
 name = "diamond-ftir-package"
 dynamic = ["version"]
-description = ''
+description = 'Calculate nitrogen, hydrogen, platelet and other defect properties of diamond from infrared (FTIR) spectra.'
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = "MIT"
-keywords = []
+keywords = ["diamond", "FTIR", "infrared", "spectroscopy", "nitrogen", "gemology"]
 authors = [
   { name = "Henry Towbin", email = "24940778+whtowbin@users.noreply.github.com" },
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: Implementation :: CPython",
-  "Programming Language :: Python :: Implementation :: PyPy",
 ]
-dependencies = []
+dependencies = [
+    "matplotlib>=3.7.5",
+    "numpy>=1.24.4",
+    "pandas>=2.0.3",
+    "pybaselines>=1.1.0",
+    "scipy>=1.10.1",
+    "seaborn>=0.13.2",
+    "tenacity>=9.0.0",
+    "xarray>=2023.1.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3.5", "ruff", "ty"]
 
 [project.urls]
 Documentation = "https://github.com/unknown/diamond-ftir-package#readme"
 Issues = "https://github.com/unknown/diamond-ftir-package/issues"
 Source = "https://github.com/unknown/diamond-ftir-package"
+
+[project.scripts]
+diamond-ftir = "diamond_ftir_package.cli:main"
+
+[project.gui-scripts]
+diamond-ftir-gui = "diamond_ftir_package.gui:main"
 
 [tool.hatch.version]
 path = "src/diamond_ftir_package/__about__.py"
@@ -79,3 +95,9 @@ exclude_lines = [
   "if __name__ == .__main__.:",
   "if TYPE_CHECKING:",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+extend-exclude = ["archive", "src/diamond_ftir_package/SPC"]
