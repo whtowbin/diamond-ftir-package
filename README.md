@@ -20,7 +20,23 @@ uv tool install diamond-ftir-package      # or: pipx install diamond-ftir-packag
 ## Desktop app
 
 ```bash
-diamond-ftir-gui
+uv tool install "diamond-ftir-package[gui]"
+diamond-ftir-app          # Qt app: spectra, batches, maps and the recipe editor
+```
+
+(The earlier tkinter app is still available as `diamond-ftir-gui`.)
+
+### Your own peaks and baselines: recipes
+
+Define extra measurements (local baselines, single peaks, fitted peak clusters) in the
+*Recipe editor* tab with a live preview, or as a TOML file, and run them on single spectra,
+batches and maps. See [docs/recipes.md](docs/recipes.md).
+
+### Large maps in napari
+
+```bash
+pip install "diamond-ftir-package[napari]" "napari[all]"
+napari sample.map         # then Plugins → Diamond FTIR → Spectrum inspector
 ```
 
 1. **Open file…** or **Open folder…** (CSV, SPA or SPC spectra).
@@ -37,6 +53,7 @@ diamond-ftir-gui
 diamond-ftir run spectra/ -o results.csv            # a folder, or a single file
 diamond-ftir defaults > settings.json               # edit, then:
 diamond-ftir run spectra/ --params settings.json -o results.csv
+diamond-ftir run spectra/ --recipe my_peaks.toml -o results.csv   # extra measurements
 ```
 
 The exit code is non-zero if any file failed; failures are listed in the `Status` column.

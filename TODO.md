@@ -31,8 +31,15 @@
       the old stretched rubber band on the full spectrum caused most of multistage's thickness
       bias, so keep any rubber band local to the region it corrects.
 
+- [ ] **Recipes: report fit uncertainties** (lmfit standard errors) and flag peaks that are
+      not significantly above noise; an absent peak can currently get a small area from noise.
+- [ ] Validate the example `diamond_platelet` and `diamond_amber` recipes by injection; decide
+      whether they replace the hand-written measurements.
+- [ ] Check the napari plugin by hand in a real napari window (the automated test uses a
+      stand-in viewer; a headless napari viewer crashes offscreen with PySide6).
+- [ ] Retire the tkinter GUI once the Qt app has been used in practice.
+
 ## Later
-- [ ] Live baseline preview slider in the GUI (lam / p on the plotted spectrum).
 - [ ] GUI: edit amber bands in the app (currently via settings JSON only).
 - [ ] Profile a 50-spectrum batch before optimising further; only the nitrogen design matrix is
       cached so far.
