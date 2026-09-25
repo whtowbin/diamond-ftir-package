@@ -669,7 +669,6 @@ class Spectrum:
         peaks = baseline_subtracted2_filtered.find_peaks(
             **find_peaks_params
         )  # sets relative peak height for the width to 0.5 for full width half max and distance for 5 data points between peaks
-        print(find_peaks_params.keys())
         if plot_initial == True:
             spec.plot(label="Spectrum")
             (baseline1 + baseline2).plot(label="Baseline")
@@ -780,6 +779,7 @@ class Spectrum:
 # # %%
 
 
+# [CITATION NEEDED: rubber-band correction; implementation adapted from R. Kiselev, DSP StackExchange]
 def rubberband(x, y):
     """
     Rubber band baseline from
