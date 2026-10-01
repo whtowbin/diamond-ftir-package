@@ -1,18 +1,20 @@
 #%%
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import xarray as xr
-from .Spectrum_obj import Spectrum
+
 from .DiamondSpectrum import Diamond_Spectrum
+from .Spectrum_obj import Spectrum
+
 #%%
+from .workbench.data import read_two_columns
 
 
 def CSV_to_IR_Diamond_Spectrum(filepath):
     filepath = Path(filepath) # ensure path is a pathlib object
-    data = pd.read_csv(filepath)
-    wavenumber = data.iloc[:,0].to_numpy()
-    intensities = data.iloc[:,1].to_numpy()
+    wavenumber, intensities = read_two_columns(filepath)
 
     sample_name = filepath.name.split("-")[0]
 
@@ -20,7 +22,6 @@ def CSV_to_IR_Diamond_Spectrum(filepath):
         Metadata = {
             "Filename": filepath.name,
             "Sample": sample_name,
-            "cheese":"yes please"
         }
         x_data = wavenumber
         # Data = {"X": x_data, "Y": intensities}
@@ -40,9 +41,7 @@ def CSV_to_IR_Diamond_Spectrum(filepath):
 
 def CSV_to_IR_Spectrum(filepath):
     filepath = Path(filepath) # ensure path is a pathlib object
-    data = pd.read_csv(filepath)
-    wavenumber = data.iloc[:,0].to_numpy()
-    intensities = data.iloc[:,1].to_numpy()
+    wavenumber, intensities = read_two_columns(filepath)
 
     sample_name = filepath.name.split("-")[0]
 
@@ -50,7 +49,6 @@ def CSV_to_IR_Spectrum(filepath):
         Metadata = {
             "Filename": filepath.name,
             "Sample": sample_name,
-            "cheese":"yes please"
         }
         x_data = wavenumber
         # Data = {"X": x_data, "Y": intensities}

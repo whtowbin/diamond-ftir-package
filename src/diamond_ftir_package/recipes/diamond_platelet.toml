@@ -1,0 +1,37 @@
+name = "diamond_platelet"
+description = """EXAMPLE cluster: platelet (B') peak and the 1405 cm-1 peak fitted jointly
+with pseudo-Voigt profiles after a local ASLS + rubber-band baseline. This is a new fitting
+method, not a reproduction of measure_platelets_and_adjacent (which uses peak finding).
+Validate it (injection tests) before relying on it.
+[CITATION NEEDED: platelet peak position and 1405 cm-1 assignment]"""
+x_unit = "cm-1"
+normalize_by = "thickness"
+
+[[features]]
+name = "platelet"
+region = [1340, 1500]
+model = "pseudo_voigt"
+
+[[features.baseline]]
+method = "asls"
+lam = 1000
+p = 0.001
+median_filter = 5
+
+[[features.baseline]]
+method = "rubberband"
+stretch = 1e-8
+
+[[features.peaks]]
+name = "B_prime"
+center = 1368
+center_range = [1355, 1380]
+fwhm = 12
+fwhm_range = [3, 40]
+
+[[features.peaks]]
+name = "1405"
+center = 1405
+center_range = [1402, 1408]
+fwhm = 4
+fwhm_range = [1, 12]

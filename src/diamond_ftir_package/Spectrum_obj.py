@@ -1,19 +1,16 @@
 # %%
-import numpy as np
-
-from dataclasses import dataclass
-from typing import Dict, Tuple, List, Any, Union
-import matplotlib.pyplot as plt
-from scipy.interpolate import Akima1DInterpolator
 from copy import deepcopy
-from scipy.signal import medfilt, find_peaks
-from scipy.integrate import simpson as simpson_integrate
-from scipy.spatial import ConvexHull
+from dataclasses import dataclass
 
+import matplotlib.pyplot as plt
+import numpy as np
 import pybaselines as pybl
-import scipy.sparse as sparse
-
+from scipy import sparse
+from scipy.integrate import simpson as simpson_integrate
+from scipy.interpolate import Akima1DInterpolator
 from scipy.ndimage import gaussian_filter1d
+from scipy.signal import find_peaks, medfilt
+from scipy.spatial import ConvexHull
 
 
 @dataclass(order=True)
@@ -75,8 +72,8 @@ class Spectrum:
     Y: np.ndarray = None  # Typically intensity of absorbance
     X_Unit: str = None
     Y_Unit: str = None
-    metadata: Dict = None
-    kwargs: Dict = None  # defines kwargs, should probably have a metadata dict
+    metadata: dict = None
+    kwargs: dict = None  # defines kwargs, should probably have a metadata dict
     baseline = None
 
     def __post_init__(self):
@@ -90,7 +87,7 @@ class Spectrum:
         self.initial_spectrum = deepcopy(self)
 
     def select_range(
-        self, X_low: Union[int, float], X_high: Union[int, float], inplace: bool = False
+        self, X_low: float, X_high: float, inplace: bool = False
     ):
         """Selects a subset of the data based on the selected range for x axis points.
           Finds closest datapoints to given ranges.
@@ -118,8 +115,8 @@ class Spectrum:
 
     def integrate_peak(
         self,
-        X_low: Union[int, float, None] = None,
-        X_high: Union[int, float, None] = None,
+        X_low: float | None = None,
+        X_high: float | None = None,
     ):
         """
         Calculates the integrated area under the curve within the specified x-axis range.
@@ -166,8 +163,8 @@ class Spectrum:
 
     def peak_height(
         self,
-        X_low: Union[int, float, None] = None,
-        X_high: Union[int, float, None] = None,
+        X_low: float | None = None,
+        X_high: float | None = None,
     ):
         """
         Calculates the average height (intensity) of the spectrum within the specified x-axis range.
@@ -242,12 +239,18 @@ class Spectrum:
 
     def interpolate(
         self,
-        X_low: Union[int, float],
-        X_high: Union[int, float],
-        step: Union[int, float] = 1,
+        X_low: float,
+        X_high: float,
+        step: float = 1,
         inplace: bool = False,
+        method: str = "cubic",
     ):
-        """Interpolates Spectrum using SciPy's Akima 1D Interpolator
+        """Resample the spectrum onto a regular grid.
+
+        ``method``: "cubic" (cubic spline, default), "akima", "makima", "pchip" or "linear".
+        Cubic spline reproduced sharp diamond peaks best when moving from 0.48, 0.96, 1.93
+        and 7.7 cm-1 spacings to a 1 cm-1 grid (lowest RMS error and peak-height loss;
+        see docs/methods.md). Resampling does not change the spectrum's true resolution.
 
         Args:
             X_low (Union[int, float]): _description_
@@ -269,8 +272,7 @@ class Spectrum:
             )
 
         X_interp = np.arange(start=X_low, stop=X_high, step=step)
-        interpolater = Akima1DInterpolator(self.X, self.Y)
-        Y_interpolated = interpolater(X_interp)
+        Y_interpolated = resample_values(self.X, self.Y, X_interp, method)
 
         if inplace == False:
             other = deepcopy(self)
@@ -550,10 +552,10 @@ class Spectrum:
 
     def find_complex_peaks(
         self,
-        baseline_range: Tuple = (None, None),
-        noise_range: Tuple = (None, None),
-        peak_range: Tuple = (None, None),
-        baseline1_param: Dict = {"lam": 1e7, "p": 0.005},
+        baseline_range: tuple = (None, None),
+        noise_range: tuple = (None, None),
+        peak_range: tuple = (None, None),
+        baseline1_param: dict | None = None,
         baseline2_stretch_param: float = 0.0000000001,
         rough_median_filter_len: int = 21,
         fine_median_filter_len: int = 3,
@@ -561,7 +563,7 @@ class Spectrum:
         fine_gaussian_filter: bool = False,
         fine_median_filter: bool = False,
         peak_noise_mult: int = 2,
-        find_peaks_params={"width": (None, None), "rel_height": 0.5, "distance": 5},
+        find_peaks_params: dict | None = None,
         plot_initial: bool = False,
         plot_subtracted: bool = False,
         plot_peak_locations: bool = True,
@@ -630,6 +632,12 @@ class Spectrum:
             - For accurate noise estimation, select a noise_range with minimal peaks
         """
 
+        # Fresh copies: the noise-derived thresholds below must not leak into later calls
+        # through a shared default dict (or modify the caller's dict).
+        baseline1_param = dict(baseline1_param or {"lam": 1e7, "p": 0.005})
+        find_peaks_params = dict(
+            find_peaks_params or {"width": (None, None), "rel_height": 0.5, "distance": 5}
+        )
         if baseline_range[0] != None:
             spec = self.select_range(baseline_range[0], baseline_range[1])
         else:
@@ -669,7 +677,6 @@ class Spectrum:
         peaks = baseline_subtracted2_filtered.find_peaks(
             **find_peaks_params
         )  # sets relative peak height for the width to 0.5 for full width half max and distance for 5 data points between peaks
-        print(find_peaks_params.keys())
         if plot_initial == True:
             spec.plot(label="Spectrum")
             (baseline1 + baseline2).plot(label="Baseline")
@@ -735,10 +742,10 @@ class Spectrum:
 
     def test_saturation(
         self,
-        X_low: Union[int, float],
-        X_high: Union[int, float],
-        saturation_cutoff: Union[int, float],
-        stdev_cut_off: Union[int, float],
+        X_low: float,
+        X_high: float,
+        saturation_cutoff: float,
+        stdev_cut_off: float,
         smoothing_window: int = 21,
     ) -> bool:
         """Tests if the spectrum is saturated in a region either by total intensity of by standard deviation. Best Suited for IR spectra where saturation point is known to be around 2 absorbance units and signal gets noisier the more saturated it is. An alternate method for Raman would be to check for plateaus in a peak.
@@ -778,6 +785,28 @@ class Spectrum:
 # example.interpolate_spectrum()
 
 # # %%
+
+
+# [CITATION NEEDED: rubber-band correction; implementation adapted from R. Kiselev, DSP StackExchange]
+def resample_values(x, y, x_new, method: str = "cubic"):
+    """Values of the curve (x, y) at ``x_new`` with the chosen interpolation method."""
+    from scipy.interpolate import CubicSpline, PchipInterpolator
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    x, keep = np.unique(x, return_index=True)  # interpolators need strictly increasing x
+    y = y[keep]
+    if method == "cubic":
+        return CubicSpline(x, y)(x_new)
+    if method == "akima":
+        return Akima1DInterpolator(x, y)(x_new)
+    if method == "makima":
+        return Akima1DInterpolator(x, y, method="makima")(x_new)
+    if method == "pchip":
+        return PchipInterpolator(x, y)(x_new)
+    if method == "linear":
+        return np.interp(x_new, x, y)
+    raise ValueError(f"unknown interpolation method {method!r}")
 
 
 def rubberband(x, y):

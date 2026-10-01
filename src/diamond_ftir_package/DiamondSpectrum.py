@@ -1,46 +1,55 @@
 # %%
+import logging
+from copy import deepcopy
+from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
-from copy import deepcopy
-import numpy as np
-
-# import scipy.signal
-import scipy.optimize as optimize
-import pybaselines as pybl
-from copy import deepcopy
-import pandas as pd
-from dataclasses import dataclass
-from typing import Dict, Tuple, List, Any, Union
-import scipy.sparse as sparse
-from tenacity import retry  # Function to retry failed fitting algorithms for a set number of times
-from scipy.spatial import ConvexHull
-
-
-# import scipy.linalg
-from scipy.optimize import nnls, lsq_linear
 
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import pybaselines as pybl
+import scipy.sparse.linalg  # noqa: F401  (makes sparse.linalg available)
+from scipy import optimize, sparse
+from scipy.linalg import solveh_banded
+from scipy.optimize import lsq_linear
+from scipy.signal import medfilt
 
-try:
-    from .Spectrum_obj import Spectrum
-    from .typeIIA import typeIIA_json
-    from .CAXBDY import CAXBDY_json
+from .CAXBDY import CAXBDY_json
+from .params import (
+    AmberParams,
+    DiamondFitParams,
+    HydrogenParams,
+    NitrogenParams,
+    PlateletParams,
+)
+from .Spectrum_obj import Spectrum, rubberband
+from .typeIIA import typeIIA_json
 
-except:
-    from Spectrum_obj import Spectrum
-    from typeIIA import typeIIA_json
-    from CAXBDY import CAXBDY_json
+logger = logging.getLogger(__name__)
 
 # from warnings import deprecated
 
 # %%
+# TODO Add Kwargs to methods to reduce hardcoding of parameters
+# TODO Add additional Hydrogen defect peaks such as 3237 cm-1, 2785 cm-1
+# TODO List stats for initial spectral resolution and other paramters
+# TODO Add function to mask tops of nitrogen peaks to avoid saturation
+# TODO add output flags for potentially bad fits in diamond and Nitrogen fitting
+# TODO add plot of diamond fit, platlets, and Hyrdrogen Peaks and as an optional flag, 
+# TODO Improve plot layout and add customization such as title, axis labels, etc.
 
+# TODO write entry point scripts to run single or batches of spectra with various output options. dicts, csv, json, etc.
+# TODO write import script to load various spectra formats and convert to the Spectrum object
+
+#%%
 # Type Spectra are only imported once outside of the class so that they dont fill up the memory in long loops, by creating multiple identical objects
 typeIIA = pd.DataFrame(typeIIA_json)
 # typeIIA = typeIIA.set_index(keys=["wn"])
 
 typeIIA_Spectrum = Spectrum(
-    X=typeIIA["wn"],
-    Y=typeIIA["absorbance"],
+    X=typeIIA["wn"].to_numpy(),
+    Y=typeIIA["absorbance"].to_numpy(),
     X_Unit="Wavenumber",
     Y_Unit="Absorbance",
 )
@@ -48,6 +57,27 @@ typeIIA_Spectrum = Spectrum(
 
 CAXBDY = pd.DataFrame(CAXBDY_json)
 CAXBDY = CAXBDY.set_index(keys=["wn"])
+
+
+_DEFAULT_CAXBDY = CAXBDY
+_NITROGEN_LABELS = ["C", "A", "X", "B", "D", "Y", "offset", "linear"]
+
+
+def _build_nitrogen_design(CAXBDY, wn_low, wn_high):
+    """Design matrix (components + offset + linear) for the nitrogen fit window."""
+    CAXBDY_select = CAXBDY.loc[wn_low:wn_high]
+    wn_array = CAXBDY_select.index.to_numpy()
+    offset = np.ones_like(wn_array)
+    linear = np.arange(len(offset)) - (wn_high - wn_low)
+    matrix = np.hstack((CAXBDY_select.to_numpy(), np.vstack((offset, linear)).T))
+    fit_component_df = pd.DataFrame(matrix, columns=_NITROGEN_LABELS, index=wn_array)
+    return matrix, wn_array, fit_component_df
+
+
+@lru_cache(maxsize=8)
+def _nitrogen_design(wn_low, wn_high):
+    """Cached design matrix for the bundled CAXBDY reference (rebuilt only if the window changes)."""
+    return _build_nitrogen_design(_DEFAULT_CAXBDY, wn_low, wn_high)
 
 
 @dataclass()
@@ -100,9 +130,6 @@ class Diamond_Spectrum(Spectrum):
         - Based on reference spectra and methods from diamond research literature
         - Calculation of nitrogen content follows methodologies established by De Beers Technologies
     """
-
-    def diamonds(self):
-        print("Diamonds are Forever")
 
     def interpolate_to_diamond(self):
         """
@@ -196,7 +223,7 @@ class Diamond_Spectrum(Spectrum):
 
         elif (main_diamond_sat == True) & (secondary_diamond_sat == False):
             fit_mask_idx = (self.X > 2390) & (self.X < 2670)
-            print("Primary Diamond Peaks Are Saturated")
+            logger.info("Primary diamond peaks are saturated; using 2400-2670 cm-1")
 
         elif (
             (main_diamond_sat == True)
@@ -204,20 +231,20 @@ class Diamond_Spectrum(Spectrum):
             & (third_diamond_sat == False)
         ):
             fit_mask_idx = (self.X > 3130) & (self.X < 3500)
-            print("Secondary Diamond Peaks Are Saturated")
+            logger.info("Secondary diamond peaks are saturated; using 3130-3500 cm-1")
 
         elif (
             (main_diamond_sat == True)
             & (secondary_diamond_sat == True)
             & (third_diamond_sat == True)
         ):
-            raise Exception(
+            raise ValueError(
                 "All diamond peaks  are saturated and thickness correction cannot be determined"
             )
 
         # Adds a bunch of other non saturated regions to the baseline that are useful for fitting baselines to diamonds
         fit_mask_idx = (
-            fit_mask_idx | ((self.X > 3130) & (self.X < 3500))  #
+            fit_mask_idx | ((self.X > 3130) & (self.X < 3500))
             # | ((self.X > 1450) & (self.X < 1750))
             # | ((self.X > 680) & (self.X < 900))
         )
@@ -232,6 +259,8 @@ class Diamond_Spectrum(Spectrum):
         inplace: bool = False,
         saturation_cutoff=2.5,
         stdev_cut_off=0.5,
+        params: DiamondFitParams | None = None,
+        start: tuple[float, float] | None = None,
     ):
         """
         Fits a sophisticated baseline to diamond spectra and calculates thickness normalization factor.
@@ -253,6 +282,11 @@ class Diamond_Spectrum(Spectrum):
                 "ALS" (custom implementation, slower but more stable for some spectra). Defaults to "Whittaker".
             inplace (bool, optional): If True, stores the baseline and typeIIA_ratio in the current object.
                 If False, returns a new Spectrum object with the baseline. Defaults to False.
+            params (DiamondFitParams, optional): Full baseline settings (method, search, lam/p,
+                bounds). When given it overrides the three keyword settings above.
+            start (tuple, optional): (lam, p) to start the search from instead of
+                ``params.lam, params.p``. Maps use this to start each pixel near the
+                sample's typical values.
 
         Returns:
             Spectrum or self: If inplace=False, returns a new Spectrum object with the calculated
@@ -272,90 +306,39 @@ class Diamond_Spectrum(Spectrum):
             test_diamond_saturation: Detects which diamond peaks are saturated
             normalize_diamond: Uses the typeIIA_ratio to create a thickness-normalized spectrum
         """
-        try:
-            fit_mask_idx = self.test_diamond_saturation(saturation_cutoff, stdev_cut_off)
-
-        except Exception as e:
-            print(e)
-
-        baseline_func = select_baseline_func(baseline_algorithm)
-
-        ideal_diamond_Y = self.interpolated_typeIIA_Spectrum.Y
-
-        X = self.X
-        Y_filter = self.median_filter(21).Y
-        # Subtract a mild ASLS Baseline
-        Y_ASLS = baseline_func(Y_filter, lam=1e10, p=0.0005)
-        Y_subtracted = Y_filter - Y_ASLS
-        # Subtract a Semi-agressive rubberband baseline
-        # Y_rubber = self.median_filter(21).baseline_aggressive_rubberband(Y_stretch=0.00000001).Y
-        Y_rubber = baseline_aggressive_rubberband(X, Y_subtracted, Y_stretch=0.00000002)
-        Y_subtracted = Y_subtracted - Y_rubber
-
-        # Fit a more aggressive ASLS Baseline to the baseline subtracted values
-        def baseline_diamond_fit_R_squared(
-            baseline_input_tuple: tuple[float, float],
-            spectrum_wavenumber=X,
-            spectrum_intensity=Y_subtracted,
-            typeIIA_intensity=ideal_diamond_Y,
-            mask_idx_list=fit_mask_idx,
-        ):
-            """Function to fit a baseline and a thickness normalized "Ideal" TypeIIA to a given diamond FTIR spectrum and calculate the residuals using an optimization function
-                Written to be semi-optimized for the optimiziaiton loop
-            Args:
-                baseline_input_tuple tuple[float,float]: Tuple of inputs for Asymmetric Least squares baseline fitting function. Lam and P
-                spectrum_wavenumber (NDARRAY, optional): Array of Spectrum X intercepts typically wavenumber. Defaults to X.
-                spectrum_intensity (NDARRAY, optional): Diamond FTIR Spectrum Intensity Measurements typically absorbance. Defaults to Y_subtracted.
-                typeIIA_intensity (NDARRAY optional): Ideal TypeIIA Diamond FTIR Spectrum Intensity Measurements typically absorbance. Defaults to ideal_diamond_Y.
-                mask_idx_list (NDARRAY[int], optional): List or array of integers for index of there to evaluate functions. Defaults to fit_mask_idx.
-
-            Returns:
-                _type_: _description_
-            """
-            lam, p = baseline_input_tuple
-            # print(f"lam = {lam}, p = {p}")
-
-            baseline = baseline_func(spectrum_intensity, lam=lam, p=p)
-
-            baseline_subtracted = spectrum_intensity - baseline
-            baseline_subtracted_masked = baseline_subtracted[mask_idx_list]
-            typeIIA_masked = typeIIA_intensity[mask_idx_list]
-            fit_ratio = np.mean(baseline_subtracted_masked / typeIIA_masked)
-
-            # Force Baseline to fit flat part of spectrum
-            flat_range_idx = (spectrum_wavenumber > 4000) & (spectrum_wavenumber < 5900)
-
-            # This Weight Factor should probably be something that can be fine tuned
-            weight_factor = 0.5  # 0.1 # Sets balance of residuals between typeIIA and flatness of the baseline section
-            flat_baseline_residuals_squared = (
-                (baseline_subtracted[flat_range_idx]) ** 2
-            ).sum() * weight_factor
-
-            # Attempts to weight the residuals under the unsaturated daimond peaks more heavily
-            typeIIa_residuals_squared = (
-                ((baseline_subtracted_masked / fit_ratio) - typeIIA_masked) ** 2
-            ).sum()
-
-            Total_residuals_squares = flat_baseline_residuals_squared + typeIIa_residuals_squared
-            # print(f" total Residuals squared {Total_residuals_squares}")
-            # return np.log(Total_residuals_squares)
-            return Total_residuals_squares
-
-        # p_opt = optimize.differential_evolution(baseline_diamond_fit_R_squared, bounds=((1e8, 1e14), (1e-9,0.00001)), x0=(1e10,0.000005), maxiter = 500, atol = 1000000000, tol = 1000000000000000000)
-        # p_opt = optimize.dual_annealing(baseline_diamond_fit_R_squared, bounds=((1e8, 1e14), (1e-9,0.00001)), x0=(1e10,0.000005),  maxiter = 200)
-        p_opt = optimize.minimize(
-            baseline_diamond_fit_R_squared,
-            bounds=((1e8, 1e14), (1e-9, 0.0001)),
-            x0=(1e10, 0.000005),
+        params = params or DiamondFitParams(
+            saturation_cutoff=saturation_cutoff,
+            stdev_cut_off=stdev_cut_off,
+            baseline_algorithm=baseline_algorithm,
         )
+        fit_mask_idx = self.test_diamond_saturation(params.saturation_cutoff, params.stdev_cut_off)
+        baseline_func = select_baseline_func(params.baseline_algorithm)
+        ideal_diamond_Y = self.interpolated_typeIIA_Spectrum.Y
+        X = self.X
 
-        baseline_opt = baseline_func(Y_subtracted, lam=p_opt.x[0], p=p_opt.x[1])
-        baseline_out = baseline_opt + Y_rubber + Y_ASLS
+        if params.baseline_method == "joint":
+            lam, p = start if start is not None else (params.joint_lam, params.joint_p)
+            weights = joint_fit_weights(X, fit_mask_idx)
+            baseline_out, fit_ratio = joint_asls_diamond(
+                self.Y, ideal_diamond_Y, lam=lam, p=p, weights=weights
+            )
+            self.baseline_params = (float(lam), float(p))
+            baseline_subtracted = self.Y - baseline_out
+        else:
+            pre_baseline, Y_subtracted = diamond_pre_baseline(X, self.Y, baseline_func, params)
+            objective = DiamondBaselineObjective(
+                X, Y_subtracted, ideal_diamond_Y, fit_mask_idx, baseline_func, params
+            )
+            lam, p = search_baseline_params(objective, params, start=start)
+            self.baseline_params = (lam, p)
 
-        baseline_subtracted = self.Y - baseline_out
-        baseline_subtracted_masked = baseline_subtracted[fit_mask_idx]
-        typeIIA_masked = ideal_diamond_Y[fit_mask_idx]
-        fit_ratio = np.mean(baseline_subtracted_masked / typeIIA_masked)
+            baseline_opt = baseline_func(Y_subtracted, lam=lam, p=p)
+            baseline_out = baseline_opt + pre_baseline
+
+            baseline_subtracted = self.Y - baseline_out
+            baseline_subtracted_masked = baseline_subtracted[fit_mask_idx]
+            typeIIA_masked = ideal_diamond_Y[fit_mask_idx]
+            fit_ratio = np.mean(baseline_subtracted_masked / typeIIA_masked)
 
         if inplace == False:
             # it might be better to return a full copy of the object not just the baseline as a spectrum
@@ -374,50 +357,89 @@ class Diamond_Spectrum(Spectrum):
                 "Fit_ratio": fit_ratio,
             }
 
-    def fit_baseline(self, saturation_cutoff=2.5, stdev_cut_off=0.5):
+    # TODO Rename this funtion to be a clear that this both fits the baseline and the typeIIA ratio
+    def fit_baseline(
+        self,
+        saturation_cutoff=2.5,
+        stdev_cut_off=0.5,
+        baseline_algorithm="Whittaker",
+        params: DiamondFitParams | None = None,
+        start: tuple[float, float] | None = None,
+    ):
+        """Fit the diamond baseline and the type IIa thickness ratio in place.
+
+        Falls back to the slower ALS algorithm if the sparse solve fails. Any other error
+        (for example all diamond peaks saturated) is raised to the caller.
+        """
+        params = params or DiamondFitParams(
+            saturation_cutoff=saturation_cutoff,
+            stdev_cut_off=stdev_cut_off,
+            baseline_algorithm=baseline_algorithm,
+        )
         try:
-            self.fit_diamond_peaks(
-                baseline_algorithm="Whittaker",
-                inplace=True,
-            )
+            self.fit_diamond_peaks(inplace=True, params=params, start=start)
 
         except (np.linalg.LinAlgError, RuntimeError) as e:
+            if params.baseline_algorithm == "ALS":
+                raise
+            logger.warning("%r: fitting baseline with the alternate ALS function", e)
             self.fit_diamond_peaks(
-                baseline_algorithm="ALS",
-                inplace=True,
-                saturation_cutoff=saturation_cutoff,
-                stdev_cut_off=stdev_cut_off,
+                inplace=True, params=replace(params, baseline_algorithm="ALS"), start=start
             )
-            if e is np.linalg.LinAlgError:
-                print(e)
-                print("error caught. Fitting Baseline with alternate baseline function")
-
-        except Exception as e:
-            print(e)
 
     def normalize_diamond(self, inplace=True):
         """returns spectrum normalized to 1 cm thickness based on unsaturated Diamond peak heights"""
-        try:
-            normalized_absorbance = (
-                self.Y - self.baseline
-            ) / self.typeIIA_ratio  # Is the fit baseline already thickness corrected?
-
-            normalized_spectrum = Spectrum(
-                X=self.X,
-                Y=normalized_absorbance,
-                X_Unit="Wavenumber",
-                Y_Unit="Absorbance",
+        if getattr(self, "baseline", None) is None or self.typeIIA_ratio is None:
+            raise ValueError(
+                "Diamond Spectrum object must have a baseline and typeIIA_ratio fit prior to "
+                "using this method, try using the fit_baseline() method before calling this"
             )
-            if inplace == False:
-                return normalized_spectrum
-            else:
-                self.normalized_spectrum = normalized_spectrum
+        normalized_absorbance = (
+            self.Y - self.baseline
+        ) / self.typeIIA_ratio  # Is the fit baseline already thickness corrected?
 
-        except Exception as e:
-            print(e)
-            "Diamond Spectrum object must have a baseline and typeIIA_ratio fit prior to using this method, try using the fit_baseline() method before calling this"
+        normalized_spectrum = Spectrum(
+            X=self.X,
+            Y=normalized_absorbance,
+            X_Unit="Wavenumber",
+            Y_Unit="Absorbance",
+        )
+        if inplace == False:
+            return normalized_spectrum
+        self.normalized_spectrum = normalized_spectrum
 
-    def Nitrogen_fit(self, CAXBDY=CAXBDY, plot_fit=False, max_C_or_B=0.01):
+    def instrument_resolution(self, setting: float = 0.0) -> tuple[float, str]:
+        """Instrument resolution (cm-1) and where it came from.
+
+        Order: an explicit setting; a 'resolution' entry in the file metadata; the file
+        name (e.g. '4wnRes'); otherwise twice the ORIGINAL point spacing (before
+        interpolation; Nyquist), flagged as assumed. Resolution is the instrument setting,
+        about twice the sampling interval; OMNIC may also zero-fill, making the spacing
+        smaller still. Set it explicitly when it matters (C-centres).
+        """
+        if setting and setting > 0:
+            return float(setting), "setting"
+        meta = self.metadata or {}
+        for key in ("resolution", "Resolution"):
+            if meta.get(key):
+                return float(meta[key]), "file metadata"
+        for key in ("Filename", "filename", "Title", "source_file"):
+            found = resolution_from_name(meta.get(key, "")) if meta.get(key) else None
+            if found:
+                return found, "file name"
+        # Nyquist: resolution is about twice the sampling interval. Zero-filled data have a
+        # smaller spacing still, so this can underestimate; it is flagged.
+        spacing = float(np.median(np.abs(np.diff(self.initial_X))))
+        return 2.0 * spacing, "2 x point spacing (assumed)"
+
+    def _store_measurement(self, name: str, value) -> None:
+        """Set ``normed_<name>`` if thickness-normalised, otherwise ``<name>``."""
+        if self.typeIIA_ratio is not None:
+            setattr(self, f"normed_{name}", value / self.typeIIA_ratio)
+        else:
+            setattr(self, name, value)
+
+    def Nitrogen_fit(self, CAXBDY=CAXBDY, plot_fit=False, max_C_or_B=None, params=None):
         """
         Quantifies nitrogen content and aggregation state using the CAXBDY component fitting method.
 
@@ -444,7 +466,9 @@ class Diamond_Spectrum(Spectrum):
             plot_fit (bool, optional): Whether to plot the component fitting results.
                 Useful for visually assessing fit quality. Defaults to False.
             max_C_or_B (float, optional): Maximum ratio for minor components (C in Type IaAB or
-                B in Type Ib). Controls the balance between component types. Defaults to 0.1.
+                B in Type Ib). Overrides ``params.max_C_or_B`` when given. Defaults to 0.01.
+            params (NitrogenParams, optional): Fit window, conversion factors and limits.
+                Defaults to ``NitrogenParams()``, the historical hardcoded values.
 
         Notes:
             - This method requires a normalized spectrum (use normalize_diamond() first)
@@ -472,36 +496,27 @@ class Diamond_Spectrum(Spectrum):
             Inspired By Diamap Program by Howell et al.
             and work By Specht et al.
         """
-        wn_low = 950
-        wn_high = 1350  # 1400
-
-        CAXBDY_select = CAXBDY.loc[wn_low:wn_high]
-        CAXBDY_matrix = CAXBDY_select.to_numpy()
-        wn_array = CAXBDY_select.index.to_numpy()
-
-        offset = np.ones_like(wn_array)
-        linear = np.arange(len(offset)) - (wn_high - wn_low)
-
-        linear_array = np.vstack((offset, linear))
-        CAXBDY_matrix = np.hstack((CAXBDY_matrix, linear_array.T))
-
-        labels = [
-            "C",
-            "A",
-            "X",
-            "B",
-            "D",
-            "Y",
-            "offset",
-            "linear",
-        ]
-        fit_component_df = pd.DataFrame(CAXBDY_matrix, columns=labels, index=wn_array)
-
+        params = params or NitrogenParams()
         spec = self.normalized_spectrum
+        # Clip the window to where both the data and the reference components exist, so a
+        # window wider than the data narrows instead of failing (it used to return zeros).
+        wn_low = int(max(params.wn_low, np.ceil(spec.X.min()), CAXBDY.index.min()))
+        wn_high = int(min(params.wn_high, np.floor(spec.X.max()) - 1, CAXBDY.index.max()))
+        if (wn_low, wn_high) != (params.wn_low, params.wn_high):
+            logger.info("Nitrogen window clipped to %s-%s cm-1 by the data", wn_low, wn_high)
+        self.nitrogen_window = (wn_low, wn_high)
+        if max_C_or_B is None:
+            max_C_or_B = params.max_C_or_B
+        if CAXBDY is _DEFAULT_CAXBDY:
+            CAXBDY_matrix, wn_array, fit_component_df = _nitrogen_design(wn_low, wn_high)
+        else:
+            CAXBDY_matrix, wn_array, fit_component_df = _build_nitrogen_design(CAXBDY, wn_low, wn_high)
+
         spec_intensity = spec.select_range(wn_low, wn_high + 1).Y
 
-        wn_spacing = self.initial_X[1] - self.initial_X[0]
-        C_correction = C_center_wn_spacing_correction(wn_spacing)
+        resolution, source = self.instrument_resolution(params.resolution_cm)
+        self.nitrogen_resolution = (resolution, source)
+        C_correction = C_center_resolution_correction(resolution)
 
         # I should make the bounds limit the height of C or B depending on if its a typa 1aAB or 1b diamond
         bounds = np.array(
@@ -518,14 +533,14 @@ class Diamond_Spectrum(Spectrum):
         ).T
 
         try:
-            params = lsq_linear(CAXBDY_matrix, spec_intensity, bounds=bounds)["x"]
+            fit = lsq_linear(CAXBDY_matrix, spec_intensity, bounds=bounds)["x"]
 
-            A_Nitrogen = params[1] * 16.5
-            B_Nitrogen = params[3] * 79.4
-            C_Nitrogen = params[0] * 0.624332796 * C_correction
+            A_Nitrogen = fit[1] * params.a_ppm_per_cm
+            B_Nitrogen = fit[3] * params.b_ppm_per_cm
+            C_Nitrogen = fit[0] * params.c_ppm_per_cm * C_correction
 
-            type1b_factor = max([params[0], params[1]])
-            type1a_factor = max([params[1], params[3]])
+            type1b_factor = max([fit[0], fit[1]])
+            type1a_factor = max([fit[1], fit[3]])
 
             # Restrict Final N-Fit  if B centers are greater than C centers and vice versa
             # Type 1b fits
@@ -551,40 +566,37 @@ class Diamond_Spectrum(Spectrum):
                         (0, np.inf),
                         (0, max_C_or_B * type1a_factor),
                         (0, np.inf),
-                        (0, 0.435 * type1a_factor),
+                        (0, params.d_limit * type1a_factor),
                         (0, np.inf),
                         (-np.inf, np.inf),
                         (-np.inf, np.inf),
                     ]
                 ).T
 
-            params = lsq_linear(CAXBDY_matrix, spec_intensity, bounds=bounds2)["x"]
+            fit = lsq_linear(CAXBDY_matrix, spec_intensity, bounds=bounds2)["x"]
 
             if plot_fit == True:
-                Plot_Nitrogen(params, fit_component_df, wn_array, spec_intensity)
+                Plot_Nitrogen(fit, fit_component_df, wn_array, spec_intensity)
 
             # Assumes all params are positive. I think this is correct but That depends on the purpose of the X and D components
         except ValueError as e:
-            print("Value Error")
-            print(e)
-            params = np.zeros(6)
+            logger.warning("Nitrogen fit failed (%s); reporting zeros", e)
+            fit = np.zeros(8)
 
-        params = np.round(params, 8)
-        C_comp = params[0]
-        A_comp = params[1]
-        X_comp = params[2]
-        B_comp = params[3]
-        D_comp = params[4]
-        Y_comp = params[5]
-        A_Nitrogen = np.round(params[1] * 16.5, 1)
-        B_Nitrogen = np.round(params[3] * 79.4, 1)
-        C_Nitrogen = np.round(params[0] * 0.624332796 * C_correction, 1)
+        fit = np.round(fit, 8)
+        C_comp, A_comp, X_comp, B_comp, D_comp, Y_comp = fit[:6]
+        A_Nitrogen = np.round(fit[1] * params.a_ppm_per_cm, 1)
+        B_Nitrogen = np.round(fit[3] * params.b_ppm_per_cm, 1)
+        C_Nitrogen = np.round(fit[0] * params.c_ppm_per_cm * C_correction, 1)
 
         Total_N = np.round(A_Nitrogen + B_Nitrogen + C_Nitrogen, 1)
         AB_Nitrogen = np.round(A_Nitrogen + B_Nitrogen, 1)
         AC_Nitrogen = np.round(A_Nitrogen + C_Nitrogen, 1)
-        B_percent = np.round(B_Nitrogen / Total_N * 100, 1)
-        C_percent = np.round(C_Nitrogen / Total_N * 100, 1)
+        if Total_N > 0:
+            B_percent = np.round(B_Nitrogen / Total_N * 100, 1)
+            C_percent = np.round(C_Nitrogen / Total_N * 100, 1)
+        else:
+            B_percent = C_percent = np.nan
 
         # C = fit_param[0]  This needs to be multiplied by a molar absorptivity and as well as a correction for spectral resolution Liggins 2010 Thesis Warwick University
         nitrogen_dict = {
@@ -606,7 +618,7 @@ class Diamond_Spectrum(Spectrum):
         self.nitrogen_dict = nitrogen_dict
 
         self.nitrogen_plot_fit_params = {
-            "fit_params": params,
+            "fit_params": fit,
             "fit_component_df": fit_component_df,
             "wn_array": wn_array,
             "spec_intensity": spec_intensity,
@@ -615,7 +627,8 @@ class Diamond_Spectrum(Spectrum):
     # @deprecated(
     #     "This method will be removed and replaced with a more general function for quantifying diamond hydrogen defects: Measure_H_defects()"
     # )
-    def measure_3107_peak(self):
+    # add other H peaks such as 3237 cm-1, 2785 cm-1
+    def measure_3107_peak(self, params=None, plot=False):
         """
         Measures and quantifies the hydrogen-related 3107 cm⁻¹ peak and adjacent 3085 cm⁻¹ peak.
 
@@ -631,7 +644,9 @@ class Diamond_Spectrum(Spectrum):
         The results are stored as attributes in the Diamond_Spectrum object, allowing for
         subsequent analysis of hydrogen content and defect correlations.
 
-        No parameters are required as the method uses the spectral data already stored in the object.
+        Args:
+            params (HydrogenParams, optional): Windows, baseline settings and integration limits.
+            plot (bool, optional): Plot the region and its baseline.
 
         Attributes Set:
             If thickness normalization has been performed (typeIIA_ratio exists):
@@ -656,95 +671,34 @@ class Diamond_Spectrum(Spectrum):
             measure_platelets_and_adjacent: For measuring platelet-related peaks
             measure_amber_center: For measuring amber center features
         """
-        spectrum = self.select_range(3060, 3180)
-        baseline = self.select_range(3060, 3180).median_filter(21).baseline_ASLS(lam=0.1, p=6e-6)
+        params = params or HydrogenParams()
+        lo, hi = params.window
+        spectrum = self.select_range(lo, hi)
+        baseline = spectrum.median_filter(params.median_filter).baseline_ASLS(
+            lam=params.baseline_lam, p=params.baseline_p
+        )
         subtracted = spectrum - baseline
-        area_3107 = subtracted.integrate_peak(3103, 3110)  # (3100, 3115)
-        area_3085 = subtracted.integrate_peak(3082, 3088)
 
         # Maybe add NVH0 (3123 cm-1), and then list all peaks above a certain prominence
         # 3237, 3107,and 2785
+        self._store_measurement("area_3107", subtracted.integrate_peak(*params.peak_3107))
+        self._store_measurement("area_3085", subtracted.integrate_peak(*params.peak_3085))
 
-        if self.typeIIA_ratio != None:
-            self.normed_area_3107 = area_3107 / self.typeIIA_ratio
-
-            self.normed_area_3085 = area_3085 / self.typeIIA_ratio
-
-        else:
-            self.area_3107 = area_3107
-            self.area_3085 = area_3085
-
-    # Alt Peaks 3085,
-
-    def measure_H_peaks(self, plot=False):
-        """
-        Measures and quantifies the hydrogen-related 3107 cm⁻¹ peak and adjacent 3085 cm⁻¹ peak.
-
-        This method analyzes the 3060-3180 cm⁻¹ region to identify and measure hydrogen-related
-        defect peaks in the diamond spectrum. The 3107 cm⁻¹ peak is the most common hydrogen-related
-        feature in natural diamonds and is associated with the N3VH defect (nitrogen-vacancy-hydrogen
-        complex). The method:
-
-        1. Applies specialized baseline correction optimized for this spectral region
-        2. Integrates the peak areas at 3107 cm⁻¹ and 3085 cm⁻¹
-        3. Normalizes the areas by the diamond thickness factor if available
-
-        The results are stored as attributes in the Diamond_Spectrum object, allowing for
-        subsequent analysis of hydrogen content and defect correlations.
-
-        No parameters are required as the method uses the spectral data already stored in the object.
-
-        Attributes Set:
-            If thickness normalization has been performed (typeIIA_ratio exists):
-                normed_area_3107 (float): Thickness-normalized area of the 3107 cm⁻¹ peak
-                normed_area_3085 (float): Thickness-normalized area of the 3085 cm⁻¹ peak
-            Otherwise:
-                area_3107 (float): Raw area of the 3107 cm⁻¹ peak
-                area_3085 (float): Raw area of the 3085 cm⁻¹ peak
-
-        Notes:
-            - The method automatically applies appropriate baseline correction parameters
-              optimized for the 3107 cm⁻¹ region
-            - For accurate quantification, the spectrum should be thickness-normalized using
-              normalize_diamond() before calling this method
-            - The 3107 cm⁻¹ peak is often used as an indicator of natural versus synthetic
-              origin in certain diamond types
-            - Additional hydrogen-related peaks (e.g., 3237 cm⁻¹, 2785 cm⁻¹) are mentioned
-              in comments but not currently measured by this method
-
-        See Also:
-            normalize_diamond: For thickness normalization
-            measure_platelets_and_adjacent: For measuring platelet-related peaks
-            measure_amber_center: For measuring amber center features
-        """
-        spectrum = self.select_range(3060, 3180)
-        baseline = self.select_range(3060, 3180).median_filter(21).baseline_ASLS(lam=0.1, p=6e-6)
-        subtracted = spectrum - baseline
-        area_3107 = subtracted.integrate_peak(3103, 3110)  # (3100, 3115)
-        area_3085 = subtracted.integrate_peak(3082, 3088)
-
-        # Maybe add NVH0 (3123 cm-1), and then list all peaks above a certain prominence
-        # 3237, 3107,and 2785
-
-        if plot == True:
+        if plot:
             spectrum.plot()
             baseline.plot()
 
-        if self.typeIIA_ratio != None:
-            self.normed_area_3107 = area_3107 / self.typeIIA_ratio
-
-            self.normed_area_3085 = area_3085 / self.typeIIA_ratio
-
-        else:
-            self.area_3107 = area_3107
-            self.area_3085 = area_3085
+    def measure_H_peaks(self, plot=False, params=None):
+        """Alias of :meth:`measure_3107_peak` kept for backwards compatibility."""
+        return self.measure_3107_peak(params=params, plot=plot)
 
     def measure_platelets_and_adjacent(
         self,
-        baseline1_param={"lam": 1000, "p": 0.001},
-        find_peaks_params={},
+        baseline1_param=None,
+        find_peaks_params=None,
         plot=False,
         return_peak_dict=True,
+        params=None,
     ):
         """
         Analyzes the platelet peak and adjacent features in the 1340-1500 cm⁻¹ region of diamond spectra.
@@ -759,10 +713,11 @@ class Diamond_Spectrum(Spectrum):
 
         Args:
             baseline1_param (dict, optional): Parameters for the initial ASLS baseline correction.
-                Defaults to {"lam": 1000, "p": 0.001}.
+                Defaults to ``{"lam": params.baseline_lam, "p": params.baseline_p}``.
             find_peaks_params (dict, optional): Parameters for the peak finding algorithm.
                 If empty, the method automatically sets height and prominence thresholds based on
-                local noise levels. Defaults to {}.
+                local noise levels. Defaults to None. The dict is copied, never mutated.
+            params (PlateletParams, optional): Regions and windows. Defaults to ``PlateletParams()``.
             plot (bool, optional): If True, plots the baseline-corrected spectra and intermediate
                 processing steps. Useful for method verification. Defaults to False.
             return_peak_dict (bool, optional): If True, returns the complete peak information
@@ -799,23 +754,30 @@ class Diamond_Spectrum(Spectrum):
             normalize_diamond: For thickness normalization
         """
         # get platelet peak parameters and identify additional peaks in the range from 1340 to 1500
-        spec = self.select_range(1340, 1500)
+        params = params or PlateletParams()
+        if baseline1_param is None:
+            baseline1_param = {"lam": params.baseline_lam, "p": params.baseline_p}
+        find_peaks_params = dict(find_peaks_params or {})  # copy: never leak thresholds between spectra
+        spec = self.select_range(*params.region)
         baseline1 = spec.median_filter(5).baseline_ASLS(**baseline1_param)
         baseline_subtracted1 = spec - baseline1
         baseline2 = baseline_subtracted1.median_filter(5).baseline_aggressive_rubberband(0.00000001)
         baseline_subtracted2 = baseline_subtracted1 - baseline2
 
-        if not find_peaks_params.__contains__("height"):
-            stdev = baseline_subtracted2.select_range(1380, 1450).Y.std()
+        if "height" not in find_peaks_params:
+            stdev = baseline_subtracted2.select_range(*params.noise_window).Y.std()
             find_peaks_params["height"] = stdev * 2
             find_peaks_params["prominence"] = stdev
 
         peaks = baseline_subtracted2.find_peaks(
-            **find_peaks_params, **{"width": (None, None), "rel_height": 0.5, "distance": 5}
+            **find_peaks_params, width=(None, None), rel_height=0.5, distance=5
         )  # sets relative peak height for the width to 0.5 for full width half max and distance for 5 data points between peaks
 
         # Define platelet peak range to search
-        platelet_peak_condition = np.where((peaks["peaks_wn"] > 1355) & (peaks["peaks_wn"] < 1380))
+        search_low, search_high = params.search_window
+        platelet_peak_condition = np.where(
+            (peaks["peaks_wn"] > search_low) & (peaks["peaks_wn"] < search_high)
+        )
 
         platelet_peak_position = peaks["peaks_wn"][platelet_peak_condition]
         platelet_peak_prominence = peaks["prominences"][platelet_peak_condition]
@@ -835,13 +797,8 @@ class Diamond_Spectrum(Spectrum):
                     X_high=platelet_peak_position + platelet_peak_width / 2,
                 )
 
-                if self.typeIIA_ratio != None:
-                    self.normed_area_platelet = platelet_peak_area / self.typeIIA_ratio
-                    self.normed_height_platelet = platelet_peak_height / self.typeIIA_ratio
-
-                else:
-                    self.area_platelet = platelet_peak_area
-                    self.height_platelet = platelet_peak_height
+                self._store_measurement("area_platelet", platelet_peak_area)
+                self._store_measurement("height_platelet", platelet_peak_height)
 
                 self.platelet_peak_position = platelet_peak_position
 
@@ -857,17 +814,12 @@ class Diamond_Spectrum(Spectrum):
         baseline_subtracted3_1405 = baseline_subtracted2.select_range(1380, 1480) - baseline_1405
 
         noise_1405 = baseline_subtracted3_1405.select_range(1385, 1420).Y.std()
-        height_1405 = baseline_subtracted3_1405.select_range(1403, 1407).Y.max()
-        area_1405 = baseline_subtracted3_1405.integrate_peak(1403, 1407)
+        height_1405 = baseline_subtracted3_1405.select_range(*params.peak_1405).Y.max()
+        area_1405 = baseline_subtracted3_1405.integrate_peak(*params.peak_1405)
 
         if height_1405 > noise_1405 * 2:
-            if self.typeIIA_ratio != None:
-                self.normed_area_1405 = area_1405 / self.typeIIA_ratio
-                self.normed_height_1405 = height_1405 / self.typeIIA_ratio
-
-            else:
-                self.area_1405 = area_1405 / self.typeIIA_ratio
-                self.height_1405 = height_1405 / self.typeIIA_ratio
+            self._store_measurement("area_1405", area_1405)
+            self._store_measurement("height_1405", height_1405)
         else:
             self.normed_area_1405 = np.nan
             self.normed_height_1405 = np.nan
@@ -886,7 +838,7 @@ class Diamond_Spectrum(Spectrum):
         if return_peak_dict == True:
             return peaks
 
-    def measure_amber_center(self, plot_initial=False, plot_subtracted=False):
+    def measure_amber_center(self, plot_initial=False, plot_subtracted=False, params=None):
         """
         Analyzes the amber center features in the 4000-5100 cm⁻¹ region of diamond FTIR spectra.
 
@@ -910,6 +862,7 @@ class Diamond_Spectrum(Spectrum):
                 baseline. Useful for debugging. Defaults to False.
             plot_subtracted (bool, optional): Whether to plot the baseline-subtracted spectrum
                 with detected peaks. Defaults to False.
+            params (AmberParams, optional): Bands to integrate. Defaults to ``AmberParams()``.
 
         Returns:
             dict: Peak properties dictionary with positions, heights, prominences and widths
@@ -961,42 +914,16 @@ class Diamond_Spectrum(Spectrum):
         self.amber_center_peak_positions = peaks["peaks_wn"]
         # [[4060,10],[4160,20], [4211,10], [4354, 10], [4495, 5], [4660,20 ], [4850, 15], [4950,40]]
 
-        if self.typeIIA_ratio != None:
-            self.amber_center_peak_heights_normed = peaks["peak_heights"] / self.typeIIA_ratio
-            self.amber_center_peak_prominences_normed = peaks["prominences"] / self.typeIIA_ratio
+        params = params or AmberParams()
+        ratio = self.typeIIA_ratio
+        suffix = "_normed" if ratio is not None else ""
+        scale = ratio if ratio is not None else 1.0
 
-            self.amber_4065_area_normed = (
-                baseline_subtracted.integrate_peak(4060 - 10, 4060 + 10) / self.typeIIA_ratio
-            )
-            self.amber_4165_area_normed = (
-                baseline_subtracted.integrate_peak(4160 - 10, 4160 + 10) / self.typeIIA_ratio
-            )
-            self.amber_4211_area_normed = (
-                baseline_subtracted.integrate_peak(4211 - 10, 4211 + 10) / self.typeIIA_ratio
-            )
-            self.amber_4354_area_normed = (
-                baseline_subtracted.integrate_peak(4354 - 10, 4354 + 10) / self.typeIIA_ratio
-            )
-            self.amber_4495_area_normed = (
-                baseline_subtracted.integrate_peak(4495 - 5, 4495 + 5) / self.typeIIA_ratio
-            )
-            self.amber_4660_area_normed = (
-                baseline_subtracted.integrate_peak(4660 - 20, 4660 + 20) / self.typeIIA_ratio
-            )
-
-            self.amber_4740_area_normed = (
-                baseline_subtracted.integrate_peak(4740 - 20, 4740 + 20) / self.typeIIA_ratio
-            )
-
-            self.amber_4850_area_normed = (
-                baseline_subtracted.integrate_peak(4850 - 5, 4850 + 5) / self.typeIIA_ratio
-            )
-            self.amber_4950_area_normed = (
-                baseline_subtracted.integrate_peak(4950 - 20, 4950 + 20) / self.typeIIA_ratio
-            )
-        else:
-            self.amber_center_peak_heights = peaks["peak_heights"]
-            self.amber_center_peak_prominences = peaks["peak_prominences"]
+        setattr(self, f"amber_center_peak_heights{suffix}", peaks["peak_heights"] / scale)
+        setattr(self, f"amber_center_peak_prominences{suffix}", peaks["prominences"] / scale)
+        for label, centre, half_width in params.bands:
+            area = baseline_subtracted.integrate_peak(centre - half_width, centre + half_width)
+            setattr(self, f"amber_{label}_area{suffix}", area / scale)
 
         return peaks
 
@@ -1016,18 +943,21 @@ class Diamond_Spectrum(Spectrum):
 # %%
 
 
+# [CITATION NEEDED: Eilers & Boelens 2005 ASLS; check licence of the StackExchange implementation]
 def baseline_als(y, lam, p, niter=10):
     """
     Asymmetric Least Squares Smoothing" by P. Eilers and H. Boelens in 2005 implemented on stackoverflow by user: sparrowcide
     https://stackoverflow.com/questions/29156532/python-baseline-correction-library
     """
     L = len(y)
-    D = sparse.csc_matrix(np.diff(np.eye(L), 2))
+    # Second-difference operator, built sparse (equal to np.diff(np.eye(L), 2) without the
+    # dense L x L matrix, which took seconds and ~250 MB for a 5,000-point spectrum).
+    D = sparse.diags([1.0, -2.0, 1.0], [0, -1, -2], shape=(L, L - 2), format="csc")
+    penalty = lam * (D @ D.T)
     w = np.ones(L)
-    for i in range(niter):
-        W = sparse.spdiags(w, 0, L, L)
-        # Z = W + lam * D.dot(D.transpose())
-        Z = W + lam * np.dot(D, D.T)
+    for _ in range(niter):
+        W = sparse.diags(w, 0, shape=(L, L))
+        Z = (W + penalty).tocsc()
         z = sparse.linalg.spsolve(Z, w * y)
         w = p * (y > z) + (1 - p) * (y < z)
     return z
@@ -1067,7 +997,7 @@ def als_baseline(
     return z
 
 
-class WhittakerSmoother(object):
+class WhittakerSmoother:
     def __init__(self, signal, smoothness_param, deriv_order=1):
         self.y = signal
         assert deriv_order > 0, "deriv_order must be an int > 0"
@@ -1099,22 +1029,6 @@ class WhittakerSmoother(object):
         return solveh_banded(foo, w * self.y, overwrite_ab=True, overwrite_b=True)
 
 
-def rubberband(x, y):
-    """
-    Rubber band baseline from
-    # Find the convex hull R Kiselev on stack overflow
-    https://dsp.stackexchange.com/questions/2725/how-to-perform-a-rubberband-correction-on-spectroscopic-data
-    """
-    v = ConvexHull(np.array(list(zip(x, y)))).vertices
-    # Rotate convex hull vertices until they start from the lowest one
-    v = np.roll(v, -v.argmin())
-    # Leave only the ascending part
-    v = v[: v.argmax()]
-
-    # Create baseline using linear interpolation between vertices
-    return np.interp(x, x[v], y[v])
-
-
 def baseline_aggressive_rubberband(
     x, y, Y_stretch: float = 0.0001, plot_intermediate: bool = False
 ):
@@ -1124,6 +1038,179 @@ def baseline_aggressive_rubberband(
     baseline = rubberband(x, y_alt)
 
     return baseline - nonlinear_offset
+
+
+def joint_fit_weights(x, fit_mask):
+    """Weight 0 for saturated parts of the two-phonon band (1800-2700 cm-1 outside the
+    unsaturated fit mask), 1 elsewhere. Saturated points carry no thickness information."""
+    untrusted = (x > 1800) & (x < 2700) & ~fit_mask
+    return (~untrusted).astype(float)
+
+
+def joint_asls_diamond(y, reference, lam, p, weights, max_iter=50):
+    """Fit y = smooth baseline + t * reference in one penalised least-squares problem.
+
+    Minimises  sum_i w_i (y_i - b_i - t r_i)^2 + lam * |D2 b|^2  over the baseline b (any
+    smooth curve, as in ASLS) and the scalar thickness t, with ASLS's asymmetric reweighting
+    (w = p above the model, 1 - p below) on top of the given weights.
+
+    Unlike fitting ASLS first and scaling the reference afterwards, the baseline cannot
+    absorb part of the diamond band, because the band is part of the model. On real spectra
+    (injection tests, docs/methods_validation.md) this removed the 5-30% thickness
+    under-estimate of the other baselines. Returns (baseline, t).
+    """
+    from scipy.sparse.linalg import splu
+
+    y = np.asarray(y, dtype=float)
+    ref = np.asarray(reference, dtype=float)
+    n = y.size
+    D = sparse.diags([1.0, -2.0, 1.0], [0, 1, 2], shape=(n - 2, n), format="csc")
+    penalty = lam * (D.T @ D)
+    w0 = np.asarray(weights, dtype=float)
+    w = w0.copy()
+    t, b = 0.0, np.zeros(n)
+    for _ in range(max_iter):
+        lu = splu((sparse.diags(w) + penalty).tocsc())
+        b_y = lu.solve(w * y)  # (W + P)^-1 W y
+        b_r = lu.solve(w * ref)  # (W + P)^-1 W r
+        t = float(np.sum(w * ref * (y - b_y)) / np.sum(w * ref * (ref - b_r)))
+        b = b_y - t * b_r
+        resid = y - b - t * ref
+        w_new = w0 * np.where(resid > 0, p, 1 - p)
+        if np.array_equal(w_new > 0.5, w > 0.5):
+            break
+        w = w_new
+    return b, t
+
+
+def diamond_pre_baseline(x, y, baseline_func, params):
+    """Remove the broad background before the main baseline fit.
+
+    Returns ``(pre_baseline, y_subtracted)``. For ``baseline_method="multistage"`` this is a
+    median filter, a mild ASLS and a stretched rubber band (the original method). For
+    ``"single"`` nothing is removed, so the main ASLS fit is the only baseline (the method
+    of the original mapping script).
+    """
+    if params.baseline_method == "single":
+        return np.zeros_like(y), np.asarray(y, dtype=float)
+    y_filter = medfilt(y, params.pre_median_filter)
+    y_asls = baseline_func(y_filter, lam=params.pre_lam, p=params.pre_p)
+    y_subtracted = y_filter - y_asls
+    if not params.pre_use_rubberband:
+        return y_asls, y_subtracted
+    y_rubber = baseline_aggressive_rubberband(x, y_subtracted, Y_stretch=params.pre_rubber_stretch)
+    return y_asls + y_rubber, y_subtracted - y_rubber
+
+
+class DiamondBaselineObjective:
+    """Misfit of a candidate (lam, p) baseline: diamond peaks vs the type IIa shape, plus flatness.
+
+    Kept as a class (not a closure) so maps can reuse it and so it pickles for parallel work.
+    """
+
+    def __init__(self, x, y_subtracted, reference, mask, baseline_func, params):
+        self.y = y_subtracted
+        self.baseline_func = baseline_func
+        self.mask = mask
+        self.reference_masked = reference[mask]
+        low, high = params.flat_range
+        self.flat_idx = (x > low) & (x < high)
+        self.flat_weight = params.flat_weight
+        self.evaluations = 0
+
+    def __call__(self, lam: float, p: float) -> float:
+        self.evaluations += 1
+        try:
+            baseline = self.baseline_func(self.y, lam=lam, p=p)
+        except (np.linalg.LinAlgError, ValueError):
+            return np.inf  # ill-conditioned (lam, p): steer the search away instead of failing
+        subtracted = self.y - baseline
+        masked = subtracted[self.mask]
+        ratio = np.mean(masked / self.reference_masked)
+        flat = (subtracted[self.flat_idx] ** 2).sum() * self.flat_weight
+        shape = ((masked / ratio - self.reference_masked) ** 2).sum()
+        return flat + shape
+
+    def log10(self, log_params) -> float:
+        """Objective in log10(lam), log10(p): the scale the search actually works in."""
+        return self(10.0 ** log_params[0], 10.0 ** log_params[1])
+
+
+def search_baseline_params(objective, params, start=None) -> tuple[float, float]:
+    """Choose (lam, p) for the main baseline according to ``params.baseline_search``.
+
+    - ``"fixed"``: use ``start`` or ``(params.lam, params.p)`` as they are. This is what the
+      original code effectively did (its optimiser never moved; see TODO.md).
+    - ``"optimize"``: bounded Nelder-Mead in log10 space, starting from ``start`` or
+      ``(params.lam, params.p)``. Bounds are ``params.log10_lam_bounds``/``log10_p_bounds``,
+      narrowed to +/- ``params.search_width`` decades around ``start`` when one is given.
+    - ``"grid"``: a ``grid_points`` x ``grid_points`` log grid over the same bounds, then
+      Nelder-Mead within one grid step of the best point. Slower but robust to plateaus.
+    """
+    lam0, p0 = start if start is not None else (params.lam, params.p)
+    if params.baseline_search == "fixed":
+        return float(lam0), float(p0)
+    if params.baseline_search not in ("optimize", "grid"):
+        raise ValueError(f"Unknown baseline_search {params.baseline_search!r}")
+
+    x0 = np.log10([lam0, p0])
+    bounds = [params.log10_lam_bounds, params.log10_p_bounds]
+    if start is not None and params.search_width is not None:
+        w = params.search_width
+        bounds = [
+            (max(bounds[0][0], x0[0] - w), min(bounds[0][1], x0[0] + w)),
+            (max(bounds[1][0], x0[1] - w), min(bounds[1][1], x0[1] + w)),
+        ]
+
+    if params.baseline_search == "grid":
+        # The objective is stepwise in (lam, p) because ASLS weights are 0/1-like, so a local
+        # optimiser can stall on a plateau. Scan a coarse log grid first, then refine locally
+        # within one grid step of the best point.
+        n = params.grid_points
+        lam_axis = np.linspace(*bounds[0], n)
+        p_axis = np.linspace(*bounds[1], n)
+        best = min(
+            ((objective.log10((a, b)), a, b) for a in lam_axis for b in p_axis),
+            key=lambda t: t[0],
+        )
+        x0 = np.array(best[1:])
+        step = [(bounds[0][1] - bounds[0][0]) / (n - 1), (bounds[1][1] - bounds[1][0]) / (n - 1)]
+        bounds = [
+            (max(bounds[0][0], x0[0] - step[0]), min(bounds[0][1], x0[0] + step[0])),
+            (max(bounds[1][0], x0[1] - step[1]), min(bounds[1][1], x0[1] + step[1])),
+        ]
+
+    x0 = np.clip(x0, [b[0] for b in bounds], [b[1] for b in bounds])
+    result = optimize.minimize(
+        objective.log10,
+        x0=x0,
+        method="Nelder-Mead",
+        bounds=bounds,
+        options={
+            "xatol": params.search_tolerance,
+            "fatol": 0.0,
+            "maxfev": params.search_max_evals,
+            "initial_simplex": _initial_simplex(x0, bounds),
+        },
+    )
+    lam, p = 10.0 ** result.x
+    return float(lam), float(p)
+
+
+def _initial_simplex(x0, bounds, fraction=0.25):
+    """A simplex spanning a quarter of each bound, so the first steps cross ASLS plateaus.
+
+    scipy's default simplex moves each coordinate by only 5%, which on a stepwise objective
+    often lands on the same plateau and ends the search at once.
+    """
+    x0 = np.asarray(x0, dtype=float)
+    simplex = [x0.copy()]
+    for k, (low, high) in enumerate(bounds):
+        vertex = x0.copy()
+        delta = fraction * (high - low)
+        vertex[k] = x0[k] + delta if x0[k] + delta <= high else x0[k] - delta
+        simplex.append(vertex)
+    return np.array(simplex)
 
 
 def select_baseline_func(baseline_algorithm="Whittaker"):
@@ -1148,10 +1235,38 @@ def select_baseline_func(baseline_algorithm="Whittaker"):
     return baseline_func
 
 
-def C_center_wn_spacing_correction(wn_spacing: float) -> float:
-    return (
-        9.7043 * wn_spacing + 25.304
-    )  # Function derived from Linear fit to values determined in Liggins et al. 2010 Phd Thesis
+# C-centre calibration factor versus instrument resolution (cm-1), as tabulated in DiaMap
+# (Howell et al. 2012) "from Liggins 2010 PhD thesis". [CITATION NEEDED: Liggins 2010 thesis]
+C_CENTRE_RESOLUTION_TABLE = ((0.5, 30.0), (1.0, 37.0), (2.0, 42.0), (4.0, 65.0))
+
+
+def C_center_resolution_correction(resolution: float) -> float:
+    """C-centre factor for the instrument's spectral resolution (cm-1), NOT the point spacing
+    and NOT the 1 cm-1 analysis grid: interpolation does not change the true resolution.
+
+    Piecewise-linear through Liggins' tabulated values; outside 0.5-4 cm-1 the end segments
+    are extended (flagged in docs as an extrapolation).
+    """
+    res = np.array([r for r, _ in C_CENTRE_RESOLUTION_TABLE])
+    fac = np.array([f for _, f in C_CENTRE_RESOLUTION_TABLE])
+    r = float(resolution)
+    if r < res[0]:
+        return float(fac[0] + (r - res[0]) * (fac[1] - fac[0]) / (res[1] - res[0]))
+    if r > res[-1]:
+        return float(fac[-1] + (r - res[-1]) * (fac[-1] - fac[-2]) / (res[-1] - res[-2]))
+    return float(np.interp(r, res, fac))
+
+
+# Earlier name; the argument must be the instrument resolution.
+C_center_wn_spacing_correction = C_center_resolution_correction
+
+
+def resolution_from_name(name: str) -> float | None:
+    """Resolution written in an OMNIC-style file name, e.g. '..._4wnRes_...' or '..._2res_...'."""
+    import re
+
+    m = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:wn|cm-?1)?\s*res(?:olution)?(?![a-z])", str(name), re.I)
+    return float(m.group(1)) if m else None
 
 
 # %%
@@ -1173,7 +1288,7 @@ def Plot_Nitrogen(params, fit_component_df, wn_array, spec_intensity):
 def edit_plot(
     spectrum_name,
     output_path=None,
-    subfolder: Union[None, str] = None,
+    subfolder: None | str = None,
     set_title=True,
     save_file=True,
     dpi=400,
@@ -1185,15 +1300,13 @@ def edit_plot(
     fig.set_size_inches(*dimensions)
 
     name = spectrum_name.split(".")[0]
-    if output_path == None:
-        if subfolder != None:
-            output_path = Path(f"Results/Figures/{subfolder}").mkdir(parents=True, exist_ok=True)
-        else:
-            output_path = Path(f"Results/Figures").mkdir(parents=True, exist_ok=True)
+    if output_path is None:
+        output_path = Path("Results/Figures") / (subfolder or "")
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
 
-    spectrum_name.split["."][0]
     if set_title:
         ax.set_title(spectrum_name)
 
     if save_file:
-        plt.savefig(f"{name}.png")
+        plt.savefig(output_path / f"{name}.png")

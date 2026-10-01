@@ -272,7 +272,7 @@ def Load_SPA(filepath: str) -> tuple[np.ndarray, np.ndarray, dict]:
         f.seek(296)
         timestamp = np.fromfile(f, dtype="uint32", count=1)
         acqdate = datetime(1899, 12, 31, 0, 0, tzinfo=timezone.utc) + timedelta(
-            seconds=int(timestamp)
+            seconds=int(timestamp[0])
         )
         acquisitiondate = acqdate
 

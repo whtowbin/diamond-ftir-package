@@ -1,0 +1,28 @@
+name = "diamond_hydrogen"
+description = """Hydrogen-related peaks at 3107 and 3085 cm-1 (N3VH). Same settings as
+Diamond_Spectrum.measure_3107_peak, so results are identical to it.
+[CITATION NEEDED: 3107 cm-1 N3VH assignment]"""
+x_unit = "cm-1"
+normalize_by = "thickness"
+
+[[features]]
+name = "H"
+region = [3060, 3180]
+model = "integrate"
+outputs = ["area", "height", "center"]
+
+[[features.baseline]]
+method = "asls"
+lam = 0.1
+p = 6e-6
+median_filter = 21
+
+[[features.peaks]]
+name = "3107"
+center = 3107
+integrate = [3103, 3110]
+
+[[features.peaks]]
+name = "3085"
+center = 3085
+integrate = [3082, 3088]

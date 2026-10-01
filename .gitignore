@@ -1,1 +1,18 @@
 *.spc
+__pycache__/
+*.pyc
+.DS_Store
+derby.log
+null/
+.pytest_cache/
+.ruff_cache/
+.remember/
+.venv/
+dist/
+build/
+~$*
+# Real sample spectra are never committed; keep local copies here (see tests/test_snapshot.py)
+local_data/
+*.SPA
+*.spa
+*.map
