@@ -50,6 +50,10 @@ diamond-ftir = "diamond_ftir_package.cli:main"
 [project.gui-scripts]
 diamond-ftir-gui = "diamond_ftir_package.gui:main"
 diamond-ftir-app = "diamond_ftir_package.qtgui.app:main"
+spectral-workbench = "diamond_ftir_package.workbench.qt.window:main"
+
+[project.entry-points."spectral_workbench.plugins"]
+diamond-ftir = "diamond_ftir_package.plugin:register"
 
 [project.entry-points."napari.manifest"]
 diamond-ftir-package = "diamond_ftir_package:napari.yaml"

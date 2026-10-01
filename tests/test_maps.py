@@ -171,3 +171,39 @@ def json_safe_field(result):
     import ast
 
     return ast.literal_eval(result.attrs["calibration"])["thickness_field"]
+
+
+def test_stopping_a_parallel_run_leaves_no_worker_processes():
+    """A progress callback that raises (the app's Stop / quit) must end the real workers."""
+    import multiprocessing
+
+    from diamond_ftir_package.maps import _make_tasks, _run_blocks
+
+    data = _synthetic_map()
+    coords = [(i, j) for i in range(3) for j in range(4)]
+    tasks = _make_tasks(
+        data.wn.values, data.spectra.values, coords, _params(), None, None, 1
+    )
+
+    class Stop(Exception):
+        pass
+
+    def progress(done, total):
+        raise Stop
+
+    with pytest.raises(Stop):
+        _run_blocks(tasks, 2, progress, len(coords))
+    assert multiprocessing.active_children() == []
+
+
+def test_unmeasured_pixels_are_masked_on_load():
+    from diamond_ftir_package.workbench.data import mask_invalid_pixels
+
+    data = _synthetic_map()
+    data.spectra.values[2, 1:] = 4.6e33  # junk left in a map that was stopped early
+    mask_invalid_pixels(data)
+    assert data.attrs["invalid_pixels"] == 3
+    assert (
+        np.isnan(data.spectra.values[2, 1:]).all()
+        and np.isfinite(data.spectra.values[:2]).all()
+    )

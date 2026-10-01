@@ -1,24 +1,15 @@
 #%%
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import xarray as xr
-from .Spectrum_obj import Spectrum
+
 from .DiamondSpectrum import Diamond_Spectrum
+from .Spectrum_obj import Spectrum
+
 #%%
-
-
-def read_two_columns(filepath) -> tuple[np.ndarray, np.ndarray]:
-    """Wavenumber and absorbance from the first two columns of a CSV.
-
-    Works with or without a header row (header text becomes non-numeric and is dropped),
-    and with comma, semicolon, tab or whitespace separators.
-    """
-    data = pd.read_csv(filepath, header=None, sep=None, engine="python")
-    data = data.iloc[:, :2].apply(pd.to_numeric, errors="coerce").dropna()
-    if len(data) < 10:
-        raise ValueError(f"{Path(filepath).name}: fewer than 10 numeric rows")
-    return data.iloc[:, 0].to_numpy(dtype=float), data.iloc[:, 1].to_numpy(dtype=float)
+from .workbench.data import read_two_columns
 
 
 def CSV_to_IR_Diamond_Spectrum(filepath):

@@ -85,6 +85,8 @@ class DataclassForm(QWidget):
         self.choices = choices or {}
         self.editors: dict[str, QWidget] = {}
         layout = QFormLayout(self)
+        layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)  # narrow panels
+        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.error = QLabel("")
         self.error.setStyleSheet("color: #b2182b")
         for f in fields(obj):
@@ -112,11 +114,16 @@ class DataclassForm(QWidget):
             return box
         if name in self.choices:
             combo = QComboBox()
+            combo.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            combo.setMinimumContentsLength(8)
             combo.addItems([str(c) for c in self.choices[name]])
             combo.setCurrentText(str(value))
             combo.currentTextChanged.connect(lambda _=None, n=name: self._commit(n))
             return combo
         line = QLineEdit(format_value(value))
+        line.setMinimumWidth(60)
         line.editingFinished.connect(lambda n=name: self._commit(n))
         return line
 

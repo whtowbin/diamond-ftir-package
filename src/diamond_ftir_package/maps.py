@@ -39,12 +39,16 @@ STATUS_LABELS = {
 
 
 def load_map(path: str | Path) -> xr.Dataset:
-    """Load an OMNIC ``.map`` file as a Dataset with ``spectra`` on dims (y, x, wn)."""
+    """Load an OMNIC ``.map`` file as a Dataset with ``spectra`` on dims (y, x, wn).
+
+    Pixels that were never measured (junk values) are set to NaN and skipped.
+    """
     from .LoadOmnicMAP import Load_Omnic_Map
+    from .workbench.data import mask_invalid_pixels
 
     ds = Load_Omnic_Map(str(path))
     ds.attrs["source_file"] = Path(path).name
-    return ds
+    return mask_invalid_pixels(ds)  # unmeasured pixels of a stopped map hold junk
 
 
 def on_sample_mask(spectra: xr.DataArray, map_params: MapParams) -> np.ndarray:
@@ -99,12 +103,33 @@ def _run_blocks(tasks, jobs, progress=None, total=None):
             if progress:
                 progress(len(results), total)
         return results
-    with _single_threaded_workers(), ProcessPoolExecutor(max_workers=jobs) as pool:
-        for chunk in pool.map(_analyse_block, tasks):
-            results.extend(chunk)
-            if progress:
-                progress(len(results), total)
+    with _single_threaded_workers():
+        pool = ProcessPoolExecutor(max_workers=jobs)
+        try:
+            for chunk in pool.map(_analyse_block, tasks):
+                results.extend(chunk)
+                if progress:
+                    progress(len(results), total)  # may raise to stop the run
+        except BaseException:
+            _stop_workers(pool)  # never leave worker processes running
+            raise
+        pool.shutdown()
     return results
+
+
+def _stop_workers(pool: ProcessPoolExecutor) -> None:
+    """Cancel queued blocks and end the worker processes now, not after their blocks."""
+    terminate = getattr(pool, "terminate_workers", None)  # Python 3.14+
+    if terminate is not None:
+        terminate()
+        return
+    # before 3.14: take the process list first, shutdown() forgets it
+    procs = list((getattr(pool, "_processes", None) or {}).values())
+    pool.shutdown(wait=False, cancel_futures=True)
+    for proc in procs:
+        proc.terminate()
+    for proc in procs:
+        proc.join(timeout=5)
 
 
 _THREAD_VARS = (

@@ -27,7 +27,7 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from ..core import (
+from ...core import (
     BASELINE_METHODS,
     PEAK_MODELS,
     BaselineStep,
