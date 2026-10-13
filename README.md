@@ -12,7 +12,7 @@ line, or Python.
 You need Python 3.10 or newer.
 
 ```bash
-uv tool install diamond-ftir-package      # or: pipx install diamond-ftir-package
+uv tool install git+https://github.com/whtowbin/diamond-ftir-package      # or: pipx install git+https://github.com/whtowbin/diamond-ftir-package
 ```
 
 *(Standalone downloads for macOS and Windows: [PLACEHOLDER: link once builds exist].)*
@@ -20,7 +20,7 @@ uv tool install diamond-ftir-package      # or: pipx install diamond-ftir-packag
 ## Desktop app
 
 ```bash
-uv tool install "diamond-ftir-package[gui]"
+uv tool install "diamond-ftir-package[gui] @ git+https://github.com/whtowbin/diamond-ftir-package"
 diamond-ftir-app          # Qt app: spectra, batches, maps and the recipe editor
 ```
 
@@ -35,7 +35,7 @@ batches and maps. See [docs/recipes.md](docs/recipes.md).
 ### Large maps in napari
 
 ```bash
-pip install "diamond-ftir-package[napari]" "napari[all]"
+pip install "diamond-ftir-package[napari] @ git+https://github.com/whtowbin/diamond-ftir-package" "napari[all]"
 napari sample.map         # then Plugins → Diamond FTIR → Spectrum inspector
 ```
 
